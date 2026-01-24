@@ -1,0 +1,17 @@
+chem,species_name,Exposure_duration_d,Study,sex,Administered_dose_mg_kg_d,Dose_zero,Dose_A,Dose_B,Dose_C,Dose_D,Dose_E,tau_hr,Dose_units,n_doses,route
+PFOA,Rat,112,NTP 2020,M,1.8,0,1.8,3.7,7.5,14.7,29.5,24,mg/kg-day,112,intragastric
+PFOA,Rat,112,NTP 2020,F,29.6,0,29.6,98.6,NA,NA,NA,24,mg/kg-day,112,intragastric
+GenX,Rat,90,Beekman 2016,M,10,0,10,30,NA,NA,NA,24,mg/kg-day,90,intragastric
+GenX,Rat,90,Beekman 2016,F,10,0,10,30,NA,NA,NA,24,mg/kg-day,90,intragastric
+GenX,Mouse,90,NA,M,10,0,10,30,NA,NA,NA,24,mg/kg-day,90,intragastric
+GenX,Mouse,90,NA,F,10,0,10,30,NA,NA,NA,24,mg/kg-day,90,intragastric
+PFBS,Rat,90,NA,M,10,0,10,30,NA,NA,NA,24,mg/kg-day,90,intragastric
+PFBS,Rat,90,NA,F,10,0,10,30,NA,NA,NA,24,mg/kg-day,90,intragastric
+PFBS,Mouse,90,NA,M,10,0,10,30,NA,NA,NA,24,mg/kg-day,90,intragastric
+PFBS,Mouse,90,NA,F,10,0,10,30,NA,NA,NA,24,mg/kg-day,10,oral
+TRIFLUOROACETIC ACID,Mouse,10,NA,M,10,0,10,30,NA,NA,NA,24,mg/kg-day,10,oral
+TRIFLUOROACETIC ACID,Mouse,10,NA,F,10,0,10,30,NA,NA,NA,24,mg/kg-day,10,oral
+TRIFLUOROACETIC ACID,Rat,10,NA,M,10,0,10,30,NA,NA,NA,24,mg/kg-day,10,oral
+TRIFLUOROACETIC ACID,Rat,10,NA,F,10,0,10,30,NA,NA,NA,24,mg/kg-day,10,oral
+TRIFLUOROACETIC ACID,Rabbit,10,NA,M,10,0,10,30,NA,NA,NA,24,mg/kg-day,10,oral
+TRIFLUOROACETIC ACID,Rabbit,10,NA,F,10,0,10,30,NA,NA,NA,24,mg/kg-day,10,oral

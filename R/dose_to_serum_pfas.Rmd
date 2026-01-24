@@ -1,0 +1,4848 @@
+---
+title: "dose_to_serum_pfas"
+date: "2024-10-09"
+output:   
+  html_document:
+    code_folding: hide
+    theme: journal
+    toc: yes
+    toc_float: yes
+    toc_depth: 6
+    number_sections: true
+    includes:
+     # after_body: footer.html
+  word_document:
+    toc: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# setup
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(stringr)
+library(plotly)
+library(htmltools)
+library(htmlwidgets)
+library(here)
+
+here::i_am("R/dose_to_serum_pfas.Rmd")
+
+# load custom TK functions
+source(here("R/dose_serum_functions.R"))
+```
+
+## Data input
+
+### TK Data
+
+#### Explanation of Preferred Values
+
+PFNA rat half-lives23\*24:
+<https://www.nj.gov/dep/watersupply/pdf/pfna-health-effects.pdf>
+
+```{r message=FALSE, warning=FALSE}
+#import tidy data on all PFAS pulled from EAS-E Suite
+tk_pfas <- readxl::read_excel(here("data_input/tk_pfas_easesuite.xlsx"),
+                              sheet = "tk_pfas") %>% 
+  mutate(species_name = as.factor(species_name),
+         standard_endpoint = as.factor(standard_endpoint),
+         route = as.factor(route),
+         tissue = as.factor(tissue),
+         sex = as.factor(sex)) %>% 
+  mutate(chem = str_to_upper(chem)) %>% 
+  mutate(strain = replace_na(strain, "uncharacterized")) %>% 
+  mutate(strain = as.factor(case_when(
+    species_name == "Monkey" ~ "Cynomologus",
+    grepl("monkey", strain, ignore.case = T) ~ "Cynomologus",
+    grepl("CD-1", strain, ignore.case = T) ~ "CD1",
+    grepl("Sprague|SD", strain, ignore.case = T) ~ "Sprague-Dawley",
+    grepl("wistar", strain, ignore.case = T) ~ "Wistar",
+ #   grepl("Cyno", strain, ignore.case = T) ~ "Cynomologus",
+    grepl("German", strain, ignore.case = T) ~ "German Landrace",
+    species_name == "Human" ~ "Human",
+    T ~ strain
+  ))) %>% 
+  #remove leading zeros in CAS
+  mutate(cas = sub("^0+", "", cas))
+
+skim(tk_pfas)
+```
+
+### Exposure Data
+
+Data from Heather
+
+```{r}
+dose_to_serum_1 <- readxl::read_excel(here("data_input/Studies for dose to serum conversion.xlsx"),
+                                    sheet = "revised")
+
+#fix exposure duration
+dose_to_serum_1 <- dose_to_serum_1 %>% 
+  mutate(Exposure_duration_d = case_when(!is.na(Exposure_duration_yr) ~ Exposure_duration_yr * 365,
+                                         !is.na(Exposure_duration_months) ~ Exposure_duration_months * 31,
+                                         !is.na(Exposure_duration_weeks) ~ Exposure_duration_weeks * 7,
+                                         TRUE ~ Exposure_duration_d),
+         Exposure_duration_hr = Exposure_duration_d*24) %>% 
+  mutate(#Dose_zero = as.numeric(Dose_zero),
+         Dose_A = as.numeric(Dose_A),
+         Dose_B = as.numeric(Dose_B),
+         Dose_C = as.numeric(Dose_C),
+         Dose_D = as.numeric(Dose_D)) %>% 
+  ## fix strain names to ensure better matches with TK database
+  mutate(strain = case_when(
+    strain == "Sprague–Dawley (Crl:COBS@ CD(SD)BR)" ~ "Sprague-Dawley",
+    TRUE ~ strain
+  ))
+
+skim(dose_to_serum_1)
+```
+
+### Second Dataset
+
+```{r}
+dose_to_serum_2 <- readxl::read_excel(here("data_input/Studies for time weighted average serum determination.xlsx"))
+
+dose_to_serum_2 <- dose_to_serum_2 %>% 
+  mutate(Dose_zero = as.numeric(Dose_zero),
+         Dose_A = as.numeric(Dose_A),
+         Dose_B = as.numeric(Dose_B),
+         Dose_C = as.numeric(Dose_C),
+         Dose_D = as.numeric(Dose_D),
+         Dose_E = as.numeric(Dose_E)) %>% 
+    mutate(Serum_zero = as.numeric(Serum_zero),
+           Serum_A = as.numeric(Serum_A),
+         Serum_B = as.numeric(Serum_B),
+         Serum_C = as.numeric(Serum_C),
+         Serum_D = as.numeric(Serum_D),
+         Serum_E = as.numeric(Serum_E)) %>% 
+  mutate(serum_measured_hr = as.numeric(serum_measured_hr)) %>% 
+  ## fix strain names to ensure better matches with TK database
+  mutate(strain = case_when(
+    strain == "Sprague–Dawley (Crl:COBS@ CD(SD)BR)" ~ "Sprague-Dawley",
+    TRUE ~ strain
+  ))
+
+skim(dose_to_serum_2)
+```
+
+Sent by Heather on September 30th
+```{r}
+dose_to_serum_4 <- readxl::read_excel(here("data_input/Studies for various dose metric estimation round 2 PFOS PFNA PFDA 9.30.2024.xlsx"))
+
+dose_to_serum_4 <- dose_to_serum_4 %>% 
+  mutate(Dose_zero = as.numeric(Dose_zero),
+         Dose_A = as.numeric(Dose_A),
+         Dose_B = as.numeric(Dose_B),
+         Dose_C = as.numeric(Dose_C),
+         Dose_D = as.numeric(Dose_D),
+         Dose_E = as.numeric(Dose_E)) %>% 
+    mutate(Serum_zero = as.numeric(Serum_zero),
+           Serum_A = as.numeric(Serum_A),
+         Serum_B = as.numeric(Serum_B),
+         Serum_C = as.numeric(Serum_C),
+         Serum_D = as.numeric(Serum_D),
+         Serum_E = as.numeric(Serum_E)) %>% 
+  mutate(serum_measured_hr = as.numeric(serum_measured_hr)) %>% 
+  ## fix strain names to ensure better matches with TK database
+  mutate(strain = case_when(
+    strain == "Sprague–Dawley (Crl:COBS@ CD(SD)BR)" ~ "Sprague-Dawley",
+    TRUE ~ strain
+  ))
+
+skim(dose_to_serum_4)
+```
+
+Data sent by Heather on 12-31-2024
+
+Note that included GenX and TFA here for demo purposes (to export to RShiny app)
+```{r}
+dose_to_serum_5 <- read_csv(here("data_input/Studies for various dose metric estimation 2024.12.31.csv"))
+
+dose_to_serum_5 <- dose_to_serum_5 %>% 
+  mutate(Dose_zero = as.numeric(Dose_zero),
+         Dose_A = as.numeric(Dose_A),
+         Dose_B = as.numeric(Dose_B),
+         Dose_C = as.numeric(Dose_C),
+         Dose_D = as.numeric(Dose_D),
+         Dose_E = as.numeric(Dose_E)) %>% 
+   mutate(Exposure_duration_hr = Exposure_duration_d*24) %>% 
+  mutate(dosing_interval = tau_hr)
+
+skim(dose_to_serum_5)
+```
+
+
+Heather has assembled a large document with many different combinations of chemicals/sex/species/exposure routes that she needs model params for.
+```{r}
+dose_to_serum_6 <- readxl::read_excel(here("data_input/2025.04.15 Unique chem sex.xlsx"),
+                                      sheet = "combination")
+
+dose_to_serum_7 <- readxl::read_excel(here("data_input/2025.05.14 Complete Unique chem.xlsx"),
+                             sheet = "Combinations")
+
+# bind these and distinct
+dose_to_serum_6 <- bind_rows(dose_to_serum_6,
+                             dose_to_serum_7) %>% 
+  distinct()
+
+dose_to_serum_6 <- dose_to_serum_6 %>% 
+  mutate(sex = case_when(animal_group_sex == "Female" ~ "F",
+                         animal_group_sex == "Male" ~ "M"),
+         route = case_when(grepl("inhalation", dosing_regime_route_of_exposure, ignore.case = T) ~ "Inhalation",
+                           grepl("Intraperitoneal", dosing_regime_route_of_exposure, ignore.case = T) ~ "Intraperitoneal",
+                           grepl("Oral", dosing_regime_route_of_exposure, ignore.case = T) ~ "Oral")) %>% 
+  mutate(route = case_when(grepl("Gavage", dosing_regime_route_of_exposure, ignore.case = T) ~ "Gavage",
+         T ~ route)) %>% 
+  #join with eas-e-suite database
+  left_join(tk_pfas %>% distinct(chem, cas),
+            by = c("experiment_cas" = "cas")) %>% 
+  # insert fake exposure conditions to generate data
+  mutate(Exposure_duration_d = 10,
+         Exposure_duration_hr = 240,
+         Dose_zero = 0,
+         Dose_A = 1,
+         Dose_B = 10,
+         tau_hr = 24,
+         dosing_interval = 24,
+         n_doses = 10,
+         Study = "grid_blank") 
+
+# investigate missing data
+dose_to_serum_6 %>% 
+  distinct(chem, experiment_cas, experiment_chemical) %>% 
+  filter(is.na(chem)) %>% 
+  arrange(desc(experiment_chemical))
+```
+
+
+### Combine data
+```{r}
+dose_to_serum <- bind_rows(dose_to_serum_1,
+                           dose_to_serum_2,
+                           #dose_to_serum_3,
+                           dose_to_serum_4,
+                           dose_to_serum_5,
+                           dose_to_serum_6
+                           ) %>% 
+  mutate(sd_Serum_zero = as.numeric(sd_Serum_zero),
+         sd_Serum_A = as.numeric(sd_Serum_A),
+         sd_Serum_B = as.numeric(sd_Serum_B),
+         sd_Serum_C = as.numeric(sd_Serum_C),
+         sd_Serum_D = as.numeric(sd_Serum_D),
+         sd_Serum_E = as.numeric(sd_Serum_E)) %>% 
+  mutate(
+    strain = case_when(
+      str_detect(strain, "SD|Sprague-Dawley") ~ "Sprague-Dawley",
+      str_detect(strain, "Wistar") ~ "Wistar",
+      str_detect(strain, "CD") ~ "CD1",
+      TRUE ~ strain)) %>% 
+  mutate(route = case_when(
+    route == "oral" ~ "Oral",
+    route == "intragastric" ~ "Intragastric",
+    route == "dermal" ~ "Dermal",
+    T ~ route
+  )) %>% 
+  mutate(chem = toupper(chem)) %>% 
+  mutate(chem = case_when(
+    chem == "TFA" ~ "TRIFLUOROACETIC ACID",
+    T ~ chem
+  )) %>% 
+  #get CAS for all from PFAS easesuite
+  left_join(tk_pfas %>% distinct(cas, chem) %>% drop_na(),
+            by = "chem") %>% 
+  mutate(cas = case_when(
+    is.na(experiment_cas) ~ cas,
+    T ~ experiment_cas
+  )) %>% 
+  # annotate chem name (if juust CAS is available but no name)
+  left_join(tk_pfas %>% 
+              distinct(cas, chem) %>%
+              rename(chem_new = chem) %>% 
+              drop_na(),
+            by = "cas") %>%
+  mutate(chem = case_when(
+    is.na(chem) ~ chem_new,
+    T ~ chem
+  )) %>% 
+  select(-chem_new) %>% 
+  mutate(chem = case_when(
+    is.na(chem) ~ experiment_chemical,
+    T ~ chem
+  )) %>% 
+  relocate(cas, .after = chem) 
+
+dose_to_serum
+```
+
+Check to see if any data is redundant (should equal 0)
+
+```{r}
+dose_to_serum %>% 
+  distinct(chem, species_name, sex, Study, strain, route, Exposure_duration_hr, dosing_interval) %>% 
+  group_by(chem, sex, species_name, strain, Exposure_duration_hr, Study) %>%
+  filter(n() > 1)
+```
+
+```{r}
+dose_to_serum %>% 
+  distinct(chem, species_name, sex, strain, route, Exposure_duration_hr, dosing_interval)
+```
+
+```{r}
+dose_to_serum %>% 
+  distinct(chem, cas, species_name, route) %>% 
+  arrange(desc(species_name))
+```
+Just investigate unique chems and data availability in EASE-SUITE (for any species)
+```{r}
+chem_availability <- dose_to_serum %>% 
+  distinct(chem, cas) %>% 
+  left_join(tk_pfas %>% distinct(cas, species_name) %>% drop_na(),
+            by = "cas") %>% 
+  mutate(data_avail = case_when(
+    is.na(species_name) ~ "Not Available",
+    T ~ "Available"
+  )) %>% 
+  distinct(chem, cas, data_avail) %>% 
+  arrange(desc(data_avail))
+
+chem_availability %>% 
+  group_by(data_avail) %>% 
+  summarize(n_distinct(cas))
+```
+Investigate missing chems
+```{r}
+chem_availability %>% 
+  filter(data_avail == "Not Available") %>% 
+  distinct(chem, cas)
+```
+# Ensure steady state reached
+## Calculate time to steady state for each chemical
+
+For a fraction remaining of 0.10 (i.e., 90% removal), it take 3.32
+half-lives (n = log10(fraction_remaining) / log10(1/2)).
+
+```{r}
+tk_pfas_df <- tk_pfas %>% 
+  filter(standard_endpoint == "HLe_invivo") %>% 
+  distinct(chem, sex, strain, species_name,
+           route, record_id, cas, 
+           standard_value, pubmed_id, authors, year) %>% 
+  mutate(t_steady_state_hr = standard_value * 3.32) %>% 
+  select(-standard_value) %>% 
+  pivot_longer(cols = t_steady_state_hr,
+               names_to = "standard_endpoint",
+               values_to = "standard_value") %>% 
+  mutate(standard_unit = "hr") %>% 
+  bind_rows(tk_pfas)
+```
+
+Ensure that all relevant units are standardized properly
+
+```{r}
+tk_pfas_df %>% 
+  filter(standard_endpoint %in% c("CL_app", "CL_ren",
+                                  "CL",
+                                  "F")) %>% 
+  distinct(standard_endpoint, standard_unit)
+```
+
+```{r}
+## check that units are correct
+tk_pfas_df %>% 
+  filter(standard_endpoint %in% c(
+                                  "CL"
+                                  )) %>% 
+  distinct(chem, standard_endpoint, standard_unit)
+```
+
+Note to be careful with PFBS and ADONA to adjust for body weight first!!
+
+```{r}
+tk_pfas_df %>% 
+  filter(standard_endpoint %in% c(
+                                  "HLe_invivo"
+                                  )) %>% 
+  distinct(chem, standard_endpoint, standard_unit)
+```
+
+```{r}
+tk_pfas_df %>% 
+  filter(standard_endpoint %in% c(
+                                  "VDss"
+                                  )) %>% 
+  distinct(chem, standard_endpoint, standard_unit)
+```
+
+PFHXA seems to have different units than other measurements for Volume
+of Distribution...
+
+```{r}
+tk_pfas_df %>% 
+  filter(standard_endpoint == "VDss",
+         chem %in% c("PFHXA", "PFHXS",
+                     "PFNA", "PFHPA")) %>% 
+  distinct(chem, standard_endpoint, standard_value,
+           sex, species_name, standard_unit)
+```
+
+Let's track down the study with the PFHXA VDss to ensure we're using
+correct values.
+
+```{r}
+tk_pfas_df %>% 
+  filter(standard_endpoint == "VDss",
+         chem %in% c("PFHXA")) %>% 
+  distinct(chem, standard_endpoint, sex, species_name, standard_value,  standard_unit, pubmed_id
+           
+           )
+```
+
+
+## Matching to TK Data from database
+
+### Create wide dataframe with relevant variables for modelling prior to joining to other df
+
+```{r}
+# Function to filter for serum then plasma
+filter_preferred <- function(df, value_column, tissue_column) {
+  df %>%
+    group_by(across(-c(all_of(value_column), all_of(tissue_column)))) %>%
+    # Prioritize serum, then plasma, but do not exclude if both exist
+    filter(if (any(tissue_column == "Serum")) {
+              tissue_column %in% c("Serum", "Plasma")
+           } else if (any(tissue_column == "Plasma")) {
+              tissue_column == "Plasma"
+           } else TRUE) %>%
+    ungroup() 
+}
+
+```
+
+```{r}
+# in order to create a dataset that has all of the necessary columns for each row, we'll need to split and re-join individually
+tk_pfas_wide <- tk_pfas_df %>% 
+  filter(standard_endpoint %in% c("CL_app", "CL_ren", "CL",
+                                  "VDss",
+                                  "VDapp",
+                                  "HLe_invivo",
+                                  "F",
+                                  "t_steady_state_hr",
+                                  # absorption pahse params
+                                  "kabs",
+                                  #two-phase params (alpha and beta model)
+                                  "VD2",
+                                  "VDc",
+                                  "k_alpha",
+                                  "k_beta"
+                                  )) %>% #F is percentage, so divide by 100
+  pivot_wider(names_from = standard_endpoint,
+              values_from = standard_value)
+
+#CL_app df
+CL_app <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, CL_app,authors, year,
+           `Preferred value`, tissue) %>% 
+  drop_na(CL_app) %>% 
+  rename(tissue_CL_app = tissue) %>%
+  rename(pubmed_CL_app = pubmed_id) %>% 
+  rename(preferred_CL_app = `Preferred value`) %>% 
+  mutate(route_CL_app = route) #%>% 
+ # filter_preferred("CL_app", "tissue_CL_app")
+
+#CL_app df
+CL_ren <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route,pubmed_id, doi, CL_ren, authors, year,
+           `Preferred value`, tissue) %>% 
+  drop_na(CL_ren) %>% 
+  rename(tissue_CL_ren = tissue) %>% 
+  rename(pubmed_CL_ren = pubmed_id) %>% 
+  rename(doi_CL_ren = doi) %>% 
+  rename(preferred_CL_ren = `Preferred value`) %>% 
+  mutate(route_CL_ren = route)# %>% 
+ # filter_preferred("CL_ren", "tissue_CL_ren")
+
+#VDss df
+VDss <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           VDss, `Preferred value`, tissue) %>% 
+  rename(VDss_L_kg = VDss) %>% 
+  drop_na(VDss_L_kg) %>% 
+  rename(tissue_VDss = tissue) %>% 
+  rename(pubmed_VDss = pubmed_id) %>% 
+  rename(doi_CL_VDss = doi) %>% 
+  rename(preferred_VDss = `Preferred value`) %>% 
+  mutate(author_year_VDss = paste(authors, year)) %>% 
+  mutate(route_tissue_VDss = route)# %>% 
+  #filter_preferred("VDss_L_kg", "tissue_VDss")
+
+#VDapp df
+VDapp <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           VDapp, `Preferred value`, tissue) %>% 
+  rename(VDapp_L_kg = VDapp) %>% 
+  drop_na(VDapp_L_kg) %>% 
+  rename(tissue_VDapp = tissue) %>% 
+  rename(pubmed_VDapp = pubmed_id) %>% 
+  rename(doi_VDapp = doi) %>% 
+  rename(preferred_VDapp = `Preferred value`) %>% 
+  mutate(author_year_VDapp = paste(authors, year)) %>% 
+  mutate(route_tissue_VDapp = route)
+
+# Bioavailable fraction
+F_df <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           `F`, `Preferred value`, tissue) %>% 
+  mutate(`F` = `F` / 100) %>%  #in percentage units - needs to be fraction
+  drop_na(`F`) %>% 
+  rename(tissue_F = tissue) %>% 
+  rename(pubmed_F = pubmed_id) %>% 
+  rename(doi_F = doi) %>% 
+  rename(preferred_F = `Preferred value`) %>% 
+  mutate(author_year_F = paste(authors, year)) %>% 
+  mutate(route_F = route)# %>% 
+ # filter_preferred("F", "tissue_F")
+
+#CL_app df
+CL <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           CL, `Preferred value`, tissue) %>% 
+  drop_na(CL) %>% 
+  rename(tissue_CL = tissue) %>%
+  rename(pubmed_CL = pubmed_id) %>% 
+  rename(doi_CL = doi) %>% 
+  rename(preferred_CL = `Preferred value`) %>% 
+  mutate(author_year_CL = paste(authors, year)) %>% 
+  mutate(route_CL = route)# %>% 
+#  filter_preferred("CL", "tissue_CL")
+
+# half-life
+HLe_invivo <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           HLe_invivo, `Preferred value`, tissue) %>% 
+  drop_na(HLe_invivo) %>% 
+  rename(tissue_HLe = tissue) %>% 
+  rename(pubmed_HLe = pubmed_id) %>% 
+  rename(doi_HLE = doi) %>% 
+  rename(preferred_HLe = `Preferred value`) %>% 
+  mutate(author_year_HLe = paste(authors, year)) %>% 
+  mutate(route_HLe = route)# %>% 
+ # filter_preferred("HLe_invivo", "tissue_HLe")
+
+# Absorption kinetic rate (Ka)
+kabs <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           kabs, `Preferred value`, tissue) %>% 
+  drop_na(kabs) %>% 
+  rename(tissue_kabs = tissue) %>% 
+  rename(pubmed_kabs = pubmed_id) %>% 
+  rename(doi_kabs = doi) %>% 
+  rename(preferred_kabs = `Preferred value`) %>% 
+  mutate(author_year_kabs = paste(authors, year)) %>% 
+  mutate(route_kabs = route)# %>% 
+ # filter_preferred("kabs", "tissue_kabs")
+
+#CL_app df
+t_steady_state_hr <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, authors, year,
+           t_steady_state_hr, `Preferred value`, tissue) %>% 
+  drop_na(t_steady_state_hr) %>% 
+  rename(tissue_t_steady_state = tissue) %>%
+  rename(preferred_steady_state = `Preferred value`) %>% 
+  mutate(route_t_steady_state = route) #%>% 
+ # filter_preferred("t_steady_state_hr", "tissue_t_steady_state")
+
+# VD2 (VD0) volume of distribution at t=0
+VD2 <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           VD2, `Preferred value`, tissue) %>% 
+  drop_na(VD2) %>% 
+  rename(tissue_VD2 = tissue) %>% 
+  rename(pubmed_VD2 = pubmed_id) %>% 
+  rename(doi_VD2 = doi) %>% 
+  rename(preferred_VD2 = `Preferred value`) %>% 
+  mutate(author_year_VD2 = paste(authors, year)) %>% 
+  mutate(route_VD2 = route)
+
+# VDc (VDss) volume of distribution at steady-state
+VDc <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           VDc, `Preferred value`, tissue) %>% 
+  drop_na(VDc) %>% 
+  rename(tissue_VDc = tissue) %>% 
+  rename(pubmed_VDc = pubmed_id) %>% 
+  rename(doi_VDc = doi) %>% 
+  rename(preferred_VDc = `Preferred value`) %>% 
+  mutate(author_year_VDc = paste(authors, year)) %>% 
+  mutate(route_VDc = route)
+
+# k_alpha - alpha phase kinetic constant
+k_alpha <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           k_alpha, `Preferred value`, tissue) %>% 
+  drop_na(k_alpha) %>% 
+  rename(tissue_k_alpha = tissue) %>% 
+  rename(pubmed_k_alpha = pubmed_id) %>% 
+  rename(doi_k_alpha = doi) %>% 
+  rename(preferred_k_alpha = `Preferred value`) %>% 
+  mutate(author_year_k_alpha = paste(authors, year)) %>% 
+  mutate(route_k_alpha = route)
+
+# k_beta - alpha phase kinetic constant
+k_beta <- tk_pfas_wide %>% 
+  distinct(chem, sex, strain, species_name, route, pubmed_id, doi, authors, year,
+           k_beta, `Preferred value`, tissue) %>% 
+  drop_na(k_beta) %>% 
+  rename(tissue_k_beta = tissue) %>% 
+  rename(pubmed_k_beta = pubmed_id) %>% 
+  rename(doi_k_beta = doi) %>% 
+  rename(preferred_k_beta = `Preferred value`) %>% 
+  mutate(author_year_k_beta = paste(authors, year)) %>% 
+  mutate(route_k_beta = route)
+
+
+### join all back together
+tk_df_full <- full_join(CL,
+                        CL_app,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route"),
+                               relationship = "many-to-many") %>% 
+  full_join(CL_ren,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(VDss,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>%
+  full_join(VDapp,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(VD2,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(VDc,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(HLe_invivo,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(kabs,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(k_alpha,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(k_beta,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  full_join(F_df,
+                        by = c("chem", "sex", "strain",
+                               "species_name", "route")) %>% 
+  select(chem, sex, strain, species_name,  CL, CL_app, CL_ren, VDss_L_kg, VDapp_L_kg, VD2, VDc,
+         `F`,  HLe_invivo, kabs, k_alpha, k_beta,
+         contains("preferred"), contains("doi"),
+         contains("pubmed_"), contains("author_year"), contains("tissue"), contains("route")) %>% 
+  distinct()
+
+tk_df_full
+```
+
+Convert clearance values from mL h-1 kg-1 to L day-1 kg -1
+
+ml x (L / 1000 mL) = 1000x
+
+1 / h x (24 hr / day) = 24x
+
+```{r}
+tk_df_full <- tk_df_full %>% 
+  mutate(CLTot_L_kg_day = CL * 24 / 1000) %>%  #ml/hr-kg to L/day-kg
+  mutate(CLRen_L_kg_day = CL_ren * 24 / 1000) %>%  #ml/hr-kg to L/day-kg
+  mutate(CLApp_L_kg_day = CL_app * 24 / 1000)   #ml/hr-kg to L/day-kg
+```
+
+```{r}
+saveRDS(tk_df_full, here("data_output/tk_df_full_wide.rds"))
+```
+
+### PFHXA Special Case
+
+Clearance values have not been reported explicitly in the literature for
+PFHXA in mice. However, Gannon et
+al.[https://hero.epa.gov/hero/index.cfm?action=search.view&reference_id=2850314](2011)
+reported AUC data at various time-points, which was used by the USEPA to
+estimate elimination half-life. Furthermore, Daikin Industries
+[https://hero.epa.gov/hero/index.cfm?action=search.view&reference_id=6822782](2010)
+reported data that was used by the USEPA to estimate Vd values for mice.
+
+For male and female mice, the corresponding Vd was 0.75 and 0.78 L/kg,
+respectively, based on data from Gannon et al. (2011), again not
+indicating a significant sex difference, although the value is somewhat
+lower than in rats.
+
+Using the aforementioned datasets, USEPA
+[https://cfpub.epa.gov/ncea/iris_drafts/recordisplay.cfm?deid=357314](2023)
+estimated ORAL clearance values for PFHXA in male and female mice
+(median; 5th - 95th percentiles): Females: 0.206 (0.137 - 0.308) L/hr-kg
+Males: 0.0894 (0.053 - 0.153) L/hr-kg
+
+#### Add data into dataset
+
+NOTE: these values were already added to the excel sheet manually, so no
+need to do here.
+
+```{r eval=FALSE, include=FALSE}
+PFHXA_mice <- data.frame(chem = "PFHXA",
+                         species_name = "Mouse",
+                         strain = "CD-1",
+                         route = "Intragastric",
+                         pubmed_id = "EPA/635/R-23/027Fa",
+                         sex = c("M", "F"),
+                         CLTot_L_kg_day = c(0.0894, 0.206),
+                         VDss_L_kg = c(0.75, 0.78),
+                         F = c(1, 1),
+                         t_steady_state_hr = c(10.6, 7.9)
+                         )
+
+
+#add data back in
+tk_df_full <- bind_rows(PFHXA_mice %>%  select(-t_steady_state_hr), 
+                        tk_df_full# %>%
+                          #mutate(pubmed_id = as.character(pubmed_id))
+                          )
+
+# join back to df
+t_steady_state_hr <- bind_rows(t_steady_state_hr, #%>%
+                                 #mutate(pubmed_id = as.character(pubmed_id)), 
+                                 PFHXA_mice)
+
+PFHXA_mice
+```
+
+THere isn't an exact match for TK data for PFHXA (oral, mouse) and PFHPA
+(Intraperitoneal). PFHPA data from Fujii et al (2015) was analyzed in a
+different script and can be matched here:
+
+```{r eval=FALSE, include=FALSE}
+## read in Fujii clearance values for PFHPA
+fujii_clearance  <- read.csv(here("data_output/clearance_fujii.csv")) %>% 
+  mutate(pubmed_id = as.character(pubmed_id)) %>% 
+  mutate(tissue = "Serum")
+
+
+#prep half life data
+fujii_t_steady_state_hr <- fujii_clearance %>% 
+  filter(variable == "t1_2_hr") %>% 
+  mutate(t_steady_state_hr = value,
+         strain = "FVB/NJcl") %>% 
+  rename(species_name = species) %>% 
+  select(chem, strain, species_name, route, sex, pubmed_id, t_steady_state_hr)
+
+#reformat to join with dataset above
+fujii_clean <- fujii_clearance %>% 
+  filter(variable == "total clearance_L_kgxday") %>% 
+  mutate(CLTot_L_kg_day = value,
+         strain = "FVB/NJcl") %>% 
+  rename(species_name = species) %>% 
+  select(chem, strain, species_name, route, sex, pubmed_id, CLTot_L_kg_day) %>% 
+  left_join(fujii_t_steady_state_hr %>%  select(-route),
+            by = c("chem", "strain", "species_name",  "sex", "pubmed_id")) %>% 
+  mutate(t_1_2_hr = t_steady_state_hr / 3.32) %>%  #get half-life back from t_ss calculation above
+  mutate(VDss_L_kg = t_1_2_hr * (CLTot_L_kg_day / log(2)) ) #calculate volume of distribtuion from half-life and clearance rate
+  
+
+
+#add data back in
+tk_df_full <- bind_rows(fujii_clean, tk_df_full) %>% 
+  select(-c(CL, CL_app, CL_ren))
+
+
+# join back to df
+t_steady_state_hr <- bind_rows(t_steady_state_hr, fujii_t_steady_state_hr)
+```
+
+#### Strategic prioritized matwching
+### TK Data Matching
+
+The goal of this prioritization scheme is to match the critical
+variables (`CLTot_L_kg_day`, `VDss_L_kg`, and `HLe_invivo`) from the
+`tk_df_full` dataset to the rows in `dose_to_serum` based on multiple
+factors, with the following priority criteria applied in order:
+
+1.  **Route of Exposure** (High Priority)
+2.  **Strain Similarity** (Moderate Priority)
+3.  **Tissue** (Preferably "serum" or "plasma") (Moderate Priority)
+
+Each critical variable will be matched separately, and the best match
+will be chosen by prioritizing according to these criteria. Below is the
+detailed explanation of each step and the prioritization order:
+
+------------------------------------------------------------------------
+
+#### 1. Route of Exposure
+
+**Goal**: Match rows where the route of exposure (`route.x` from
+`dose_to_serum`) most closely matches `route.y` from `tk_df_full`.
+
+**Priority Order**: - The target route (`route.x`) is prioritized,
+followed by other related routes in decreasing order of similarity. -
+Routes such as "intravenous", "oral", etc., have their own defined
+priority schemes. If no exact match is found, similar routes are used as
+fallbacks.
+
+| **Target Route** | **Route Priority (Descending)** |
+|-------------------|-----------------------------------------------------|
+| **Intravenous** | Intravenous \> Intraperitoneal \> Intragastric \> Oral |
+| **Oral** | Oral \> Intragastric \> Intraperitoneal \> Intravenous |
+| **Dermal** | Dermal \> Intravenous \> Intraperitoneal \> Oral \> Inhalation |
+| **Other** | Target route \> Intragastric \> Intraperitoneal \> Intravenous \> Oral |
+
+------------------------------------------------------------------------
+
+#### 2. Strain Similarity
+
+**Goal**: Match the most similar strains between `strain.x` from
+`dose_to_serum` and `strain.y` from `tk_df_full` when exact matches are
+not available.
+
+**Method**: Use the Jaro-Winkler distance (string similarity metric) to
+quantify the similarity between strains.
+
+**Priority Order**: - Exact matches of `strain.x` to `strain.y` are
+preferred. - If no exact match is available, the strain with the highest
+similarity score is selected.
+
+| **Strain Match**        | **Priority** |
+|-------------------------|--------------|
+| Exact strain match      | Highest      |
+| Partial strain match    | Moderate     |
+| Dissimilar strain match | Lowest       |
+
+------------------------------------------------------------------------
+
+#### 3. Tissue Type
+
+**Goal**: Prefer matches where the `tissue` is either "serum" or
+"plasma", as these are typically the most relevant for pharmacokinetic
+studies.
+
+**Priority Order**: - "Serum" has the highest priority, followed by
+"Plasma". If neither is available, any other tissue type is used.
+
+| **Tissue Type** | **Priority** |
+|-----------------|--------------|
+| Serum           | 1            |
+| Plasma          | 2            |
+| Other           | 3            |
+
+------------------------------------------------------------------------
+
+#### Final Output
+
+After applying the prioritization scheme for `route`, `strain`, and
+`tissue`, the best match for each critical variable (`CLTot_L_kg_day`,
+`VDss_L_kg`, and `HLe_invivo`) is selected. The final output will
+include:
+
+1.  **Matched Values for Each Critical Variable**:
+
+    -   `CLTot_L_kg_day`
+    -   `VDss_L_kg`
+    -   `HLe_invivo`
+
+2.  **Associated `route`, `strain`, and `tissue`** for each critical
+    variable in the final dataset.
+
+3.  **Mismatches**:
+
+    -   For each matched critical variable, mismatches in `route`,
+        `strain`, or `tissue` will be tracked and listed, along with a
+        count of the total mismatches.
+
+------------------------------------------------------------------------
+
+## MATCHING
+
+```{r}
+library(dplyr)
+library(stringdist)
+
+# Function to get route priority based on target route
+get_route_priority <- function(target_route) {
+  switch(tolower(target_route),
+         "intravenous" = c("intravenous", "intraperitoneal", "intragastric", "oral", "dermal", "inhalation"),
+         "oral" = c("oral", "intragastric", "intraperitoneal", "intravenous", "dermal", "inhalation"),
+         "dermal" = c("dermal", "intravenous", "intraperitoneal", "intragastric", "oral", "inhalation"),
+         c(target_route, "intragastric", "intraperitoneal", "intravenous", "oral", "dermal", "inhalation"))
+}
+
+# Function to prioritize based on "Preferred value", route, strain, and tissue for each variable
+prioritize_matches <- function(df, route_col, strain_col, tissue_col, preferred_col, route_target, strain_target) {
+  df %>%
+    mutate(
+      preferred_priority = if_else(!!sym(preferred_col) == "preferred", 1, 2),  # Prioritize "preferred" rows
+      route_priority = match(!!sym(route_col), get_route_priority(route_target), nomatch = length(get_route_priority(route_target)) + 1),
+      strain_similarity = stringdist::stringdist(!!sym(strain_col), strain_target, method = "jw"),
+      tissue_priority = case_when(
+        !!sym(tissue_col) == "serum" ~ 1,
+        !!sym(tissue_col) == "plasma" ~ 2,
+        TRUE ~ 3
+      ),
+      
+      # Track mismatches
+      mismatches = paste0(
+        if_else(!!sym(route_col) != route_target, paste0("route: ", route_target, " ~ ", !!sym(route_col)), ""),
+        if_else(!!sym(strain_col) != strain_target, paste0("; strain: ", strain_target, " ~ ", !!sym(strain_col)), "")
+      ),
+      mismatches = str_remove_all(mismatches, "^; |^, |, $"),  # Clean up empty parts
+      total_mismatches = str_count(mismatches, ";") + if_else(nchar(mismatches) > 0, 1, 0)  # Count mismatches
+    ) %>%
+    # Prioritize based on "Preferred value" first, then route, strain, tissue
+    arrange(preferred_priority, route_priority, strain_similarity, tissue_priority) %>%
+    slice(1)  # Select the best match
+}
+```
+
+```{r}
+
+# Match CLTot_L_kg_day with tissue and preferred value
+matched_cl <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(CLTot_L_kg_day)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_CL", "preferred_CL", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+# Match VDss_L_kg with tissue and preferred value
+matched_vdss <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(VDss_L_kg)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_VDss", "preferred_VDss", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+# Match HLe_invivo with tissue and preferred value
+matched_hle <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(HLe_invivo)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_HLe", "preferred_HLe", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+# Match kabs with tissue and preferred value
+matched_kabs <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(kabs)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_kabs", "preferred_kabs", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+# Match k_alpha with tissue and preferred value
+matched_k_alpha <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(k_alpha)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_k_alpha", "preferred_k_alpha", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+# Match k_beta with tissue and preferred value
+matched_k_beta <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(k_beta)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_k_beta", "preferred_k_beta", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+# Match VD2 with tissue and preferred value
+matched_VD2 <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(VD2)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_VD2", "preferred_VD2", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+# Match VDc with tissue and preferred value
+matched_VDc <- dose_to_serum %>%
+  left_join(tk_df_full %>% filter(!is.na(VDc)), 
+            by = c("chem", "sex", "species_name"), relationship = "many-to-many") %>%
+  group_by(chem, sex, species_name) %>%
+  do(prioritize_matches(., "route.y", "strain.y", "tissue_VDc", "preferred_VDc", .$route.x[1], .$strain.x[1])) %>%
+  ungroup()
+
+
+# Combine the results ensuring no rows are dropped from dose_to_serum
+final_matched_df <- matched_cl %>%
+  select(chem, sex, species_name, CLTot_L_kg_day, pubmed_CL, author_year_CL,
+         tissue_CL, route_CL = route.y, strain_CL = strain.y,
+         mismatches_CL = mismatches, total_mismatches_CL = total_mismatches) %>%
+  left_join(matched_vdss %>%
+              select(chem, sex, species_name, VDss_L_kg, pubmed_VDss, author_year_VDss,
+                     tissue_VDss, route_VDss = route.y,
+                     strain_VDss = strain.y, mismatches_VDss = mismatches,
+                     total_mismatches_VDss = total_mismatches),
+            by = c("chem", "sex", "species_name")) %>%
+  left_join(matched_hle %>% select(chem, sex, species_name, HLe_invivo, pubmed_HLe, author_year_HLe,
+                                   tissue_HLe, 
+                                   route_HLe = route.y, strain_HLe = strain.y, mismatches_HLe = mismatches,
+                                   total_mismatches_HLe = total_mismatches),
+            by = c("chem", "sex", "species_name")) %>% 
+  left_join(matched_kabs %>% select(chem, sex, species_name, kabs, pubmed_kabs, author_year_kabs,
+                                    tissue_kabs, 
+                                   route_kabs = route.y, strain_kabs = strain.y, mismatches_kabs = mismatches,
+                                   total_mismatches_kabs = total_mismatches),
+            by = c("chem", "sex", "species_name")) %>% 
+  left_join(matched_k_alpha %>% select(chem, sex, species_name, k_alpha, pubmed_k_alpha, author_year_k_alpha,
+                                    tissue_k_alpha, 
+                                   route_k_alpha = route.y, strain_k_alpha = strain.y, mismatches_k_alpha = mismatches,
+                                   total_mismatches_k_alpha = total_mismatches),
+            by = c("chem", "sex", "species_name")) %>% 
+  left_join(matched_k_beta %>% select(chem, sex, species_name, k_beta, pubmed_k_beta, author_year_k_beta,
+                                    tissue_k_beta, 
+                                   route_k_beta = route.y, strain_k_beta = strain.y, mismatches_k_beta = mismatches,
+                                   total_mismatches_k_beta = total_mismatches),
+            by = c("chem", "sex", "species_name")) %>% 
+  left_join(matched_VD2 %>% select(chem, sex, species_name, VD2, pubmed_VD2, author_year_VD2,
+                                    tissue_VD2, 
+                                   route_VD2 = route.y, strain_VD2 = strain.y, mismatches_VD2 = mismatches,
+                                   total_mismatches_VD2 = total_mismatches),
+            by = c("chem", "sex", "species_name")) %>% 
+  left_join(matched_VDc %>% select(chem, sex, species_name, VDc, pubmed_VDc, author_year_VDc,
+                                    tissue_VDc, 
+                                   route_VDc = route.y, strain_VDc = strain.y, mismatches_VDc = mismatches,
+                                   total_mismatches_VDc = total_mismatches),
+            by = c("chem", "sex", "species_name"))
+  
+
+# Ensure all rows from dose_to_serum are kept
+final_matched_df <- dose_to_serum %>%
+  left_join(final_matched_df, by = c("chem", "sex", "species_name"))
+
+# Add a column for the total mismatches across all critical values
+final_matched_df <- final_matched_df %>%
+  mutate(
+    total_mismatches_all = rowSums(select(., starts_with("total_mismatches_")), na.rm = TRUE),
+    all_mismatches_list = paste(
+      mismatches_CL, mismatches_VDss, mismatches_HLe, mismatches_kabs, mismatches_k_alpha, 
+      mismatches_k_beta, mismatches_VD2, mismatches_VDc,
+      sep = "; "
+    ) %>%
+    str_replace_all("; NA", "") %>%
+    str_replace_all("NA; ", "") %>%
+    str_replace_all(";;", ";") %>%
+    str_trim()
+  )
+
+# View the final matched dataset with tissue, total mismatches across all critical values
+print(final_matched_df)
+
+
+```
+
+```{r}
+
+# manually change half-life for PFBA to 19 hr (inhalation data from pmid:25180935)
+final_matched_df <- final_matched_df %>% 
+  mutate(HLe_invivo = case_when(chem == "PFBA" & species_name == "Rat" & sex == "F" ~ 1.76,
+                                #chem == "PFBA" & species_name == "Rat" & sex == "M" ~ 
+                                T ~ HLe_invivo))
+
+```
+
+### Check missing matches
+
+```{r}
+final_matched_df %>% 
+  distinct(chem, sex, species_name, route,
+           HLe_invivo, VDss_L_kg, CLTot_L_kg_day, kabs, k_alpha, k_beta, VD2, VDc,
+           Study) %>% 
+  arrange(desc(HLe_invivo))
+```
+
+### Diagnostics on matching
+
+```{r}
+final_matched_df %>% 
+  distinct(total_mismatches_all,chem, sex, species_name, route,
+           mismatches_VDss, mismatches_kabs, 
+           mismatches_k_alpha, mismatches_k_beta,
+           mismatches_VD2, mismatches_VDc,
+           mismatches_HLe, mismatches_CL,
+           Study) %>% 
+  arrange(desc(total_mismatches_all))
+```
+
+```{r}
+# Prepare the data: Reshape and extract mismatch types (route, strain) for each variable
+mismatch_data <- final_matched_df %>%
+  #drop_na(HLe_invivo) %>% 
+  select(chem, sex, species_name, route,
+           mismatches_VDss, mismatches_CL, mismatches_HLe,
+           mismatches_kabs,
+          mismatches_k_alpha, mismatches_k_beta,
+           mismatches_VD2, mismatches_VDc,
+           HLe_invivo, VDss_L_kg, CLTot_L_kg_day, kabs,
+          k_alpha, k_beta, VD2, VDc,
+         contains("author_year"),
+         contains("pubmed")
+          ) %>%
+  distinct() %>% 
+  pivot_longer(cols = starts_with("mismatches_"), 
+               names_to = "variable", 
+               values_to = "mismatch_info") %>%
+  ### deal with sources ##
+   pivot_longer(
+    cols = starts_with("author_year_"), # Select all columns starting with "author_year_"
+    names_to = "source_variable",      # Create a new column for the source variable names
+    values_to = "source"               # Create a new column for the source values
+  ) %>%
+  mutate(
+    # Extract the variable name from the source_variable column
+    source_variable = str_remove(source_variable, "author_year_")
+  ) %>%
+  mutate(source_variable = case_when(
+    source_variable == "CL" ~ "Clearance",
+    source_variable == "VDss" ~ "Volume of Distribution",
+    source_variable == "VD2" ~ "Volume of Distribution (t=0)",
+    source_variable == "VDc" ~ "Volume of Distribution (beta phase)",
+    source_variable == "kabs" ~ "K_absorption",
+    source_variable == "k_alpha" ~ "K (alpha phase)",
+    source_variable == "k_beta" ~ "K (beta phase)",
+    source_variable == "HLe" ~ "Elimination Half-Life"
+  )) %>% 
+  ### deal with sources ##
+   pivot_longer(
+    cols = starts_with("pubmed_"), # Select all columns starting with "author_year_"
+    names_to = "pubmed_variable",      # Create a new column for the source variable names
+    values_to = "pubmedID"               # Create a new column for the source values
+  ) %>%
+  mutate(
+    # Extract the variable name from the source_variable column
+    pubmed_variable = str_remove(pubmed_variable, "pubmed_")
+  ) %>%
+  mutate(pubmed_variable = case_when(
+    pubmed_variable == "CL" ~ "Clearance",
+    pubmed_variable == "VDss" ~ "Volume of Distribution",
+    pubmed_variable == "VD2" ~ "Volume of Distribution (t=0)",
+    pubmed_variable == "VDc" ~ "Volume of Distribution (beta phase)",
+    pubmed_variable == "kabs" ~ "K_absorption",
+    pubmed_variable == "k_alpha" ~ "K (alpha phase)",
+    pubmed_variable == "k_beta" ~ "K (beta phase)",
+    pubmed_variable == "HLe" ~ "Elimination Half-Life"
+  )) %>% 
+  # Remove rows with missing mismatch data
+  mutate(variable = case_when(
+    variable == "mismatches_CL" ~ "Clearance",
+    variable == "mismatches_VDss" ~ "Volume of Distribution",
+    variable == "mismatches_VD2" ~ "Volume of Distribution (t=0)",
+    variable == "mismatches_VDc" ~ "Volume of Distribution (beta phase)",
+    variable == "mismatches_kabs" ~ "K_absorption",
+    variable == "mismatches_k_alpha" ~ "K (alpha phase)",
+    variable == "mismatches_k_beta" ~ "K (beta phase)",
+    variable == "mismatches_HLe" ~ "Elimination Half-Life"
+  )) %>% 
+  filter(
+    # Keep rows where the source_variable matches the variable column
+    source_variable == variable,
+    pubmed_variable == variable
+  ) %>% 
+  mutate(mismatch_info = case_when(
+    mismatch_info == "NANA" ~ "Species",
+         TRUE ~ mismatch_info)) %>% 
+  #filter(!is.na(mismatch_info) & mismatch_info != "") %>%
+  # Create columns indicating type of mismatch (route or strain)
+  mutate(route_mismatch = ifelse(grepl("route", mismatch_info, ignore.case = TRUE), 1, 0),
+         strain_mismatch = ifelse(grepl("strain", mismatch_info, ignore.case = TRUE), 1, 0),
+         chem_species_mismatch = ifelse(grepl("Species", mismatch_info, ignore.case = TRUE), 1, 0),
+         total_mismatches = route_mismatch + strain_mismatch + chem_species_mismatch,
+         mismatch_type = case_when(
+           route_mismatch == 1 & strain_mismatch == 1 & chem_species_mismatch == 1 ~ "Route, Strain, Species",
+           route_mismatch == 1 & strain_mismatch == 1 ~ "Route and Strain",
+           strain_mismatch == 1 & chem_species_mismatch == 1 ~ "Strain, Species",
+           route_mismatch == 1 & chem_species_mismatch == 1 ~ "Route, Species",
+           route_mismatch == 1 ~ "Route",
+           strain_mismatch == 1 ~ "Strain",
+           chem_species_mismatch == 1 ~ "Species",
+           TRUE ~ "No Mismatch"
+         )) %>% 
+  mutate(value = case_when(
+    variable == "Elimination Half-Life" ~ HLe_invivo,
+    variable == "Clearance" ~ CLTot_L_kg_day,
+    variable == "Volume of Distribution" ~ VDss_L_kg,
+    variable == "K_absorption" ~ kabs,
+    variable == "K (alpha phase)" ~ k_alpha,
+    variable == "K (beta phase)" ~ k_beta,
+    variable == "Volume of Distribution (t=0)" ~ VD2,
+    variable == "Volume of Distribution (beta phase)" ~ VDc,
+  )) %>% 
+  mutate(value = signif(value, 3)) %>% 
+  select(-c(source_variable, pubmed_variable, HLe_invivo, CLTot_L_kg_day, VDss_L_kg, kabs, k_alpha, k_beta, VD2, VDc))
+
+mismatch_data
+```
+
+```{r}
+# Create the heatmap
+mismatch_heat <- ggplot(mismatch_data, aes(x = variable, 
+                                           y = paste(chem, sex, species_name, sep = " - "), 
+                                           fill = mismatch_type,
+                                           text = paste0("PFAS:", chem, "<br>",
+                                                         "Variable :", variable, "<br>",
+                                                         "Value: ", value, "<br>",
+                                                         "Match: ",mismatch_info,"<br>",
+                                                         "Source:", source,"<br>",
+                                                         "PubmedID:", pubmedID
+                                                         ))) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c("Species" = "gray", 
+                               "Route" = "orange", 
+                               "Strain" = "blue", 
+                               "Route and Strain" = "red",
+                               "No Mismatch" = "darkgreen"), 
+                    name = "Mismatch Type") +
+  labs(x = "Toxicokinetic Parameters", y = "Chemical - Sex - Species",
+       title = "Toxicokinetic Data Matching") +
+  theme_minimal(base_size = 16) +
+  theme(axis.text.y = element_text(size = 8),  # Adjust the y-axis text size
+        axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+        legend.position = "top")
+
+# ggsave( "figuress/mismatch_heat.jpg",
+#         mismatch_heat,
+#         width = 11, height = 5,
+#        dpi = 300)
+
+mismatch_heat
+```
+
+#### Plotly
+
+```{r}
+mismatch_plotly <- ggplotly(mismatch_heat,
+                            tooltip = "text")
+
+# Save the Plotly plot to an HTML file
+#saveWidget(mismatch_plotly, "figures/plotly/mismatch_plotly.html", selfcontained = TRUE)
+
+mismatch_plotly
+```
+
+### Heatmap of TK Values
+
+```{r}
+# Normalize the value within each variable (column) group
+mismatch_data_norm <- mismatch_data %>%
+  group_by(variable) %>%
+  mutate(normalized_value = (value - min(value, na.rm = TRUE)) / (max(value, na.rm = TRUE) - min(value, na.rm = TRUE))) %>%
+    ungroup() %>%
+  arrange(chem)  # Arrange by chemical
+
+# Create the heatmap with the normalized value
+tk_heat <- ggplot(mismatch_data_norm, aes(x = variable, 
+                                     y = paste(chem, sex, species_name, sep = " - "), 
+                                     fill = normalized_value + 1e-12,
+                                     text = paste("Chemical:", chem,"<br>",
+                                                   "Species:", species_name, "<br>",
+                                                   "Sex:", sex, "<br>",
+                                                   "Variable:", variable, "<br>",
+                                                   "Value:", value, "<br>",
+                                                   #"Match: ", mismatch_info, "<br>",
+                                                   "Source:", source,"<br>",
+                                                   "PubmedID:", pubmedID
+                                                   ))) +
+  geom_tile(color = "white") +
+  
+  # Use the normalized value for the color scale
+   scale_fill_gradient(trans = scales::log_trans(base = 10),
+                      low = "red",
+                      high = "#56B1F7",
+                      space = "Lab",
+                      na.value = "grey50",
+                     ) +
+  
+  # Labels and theme
+  labs(x = "Toxicokinetic Parameters", 
+       y = "Chemical - Sex - Species",
+       title = "Toxicokinetic Data") +
+  theme_minimal(base_size = 15) +
+  theme(axis.text.y = element_text(size = 14),  # Adjust the y-axis text size
+        axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+        legend.position = "none")
+
+
+# ggsave( "figures/tk_heat.jpg",
+#         tk_heat,
+#         width = 13, height = 6,
+#        dpi = 300)
+
+tk_heat
+```
+
+#### Plotly
+
+```{r}
+tk_heat_plotly <- ggplotly(tk_heat,
+                            tooltip = "text")
+
+# Save the Plotly plot to an HTML file
+#saveWidget(tk_heat_plotly, "figures/plotly/tk_heat.html", selfcontained = TRUE)
+
+tk_heat_plotly
+```
+
+##### Export dataset to Rshiny
+```{r}
+#saveRDS(mismatch_data, "data_output/mismatch_data_for_shiny.rds")
+```
+
+
+## Check if steady state has been reached in exposure study
+
+```{r}
+matched_labeled <- final_matched_df %>% 
+  mutate(t_steady_state_hr = HLe_invivo * 3.32) %>% 
+  mutate(steady_state_reach = case_when
+         (Exposure_duration_hr < t_steady_state_hr ~ "NOT-STEADY",
+           Exposure_duration_hr > t_steady_state_hr ~ "STEADY"))
+  
+#visual check
+matched_labeled %>% 
+  distinct(chem, species_name, sex, steady_state_reach, 
+           CLTot_L_kg_day,
+           t_steady_state_hr, HLe_invivo, VDss_L_kg, Exposure_duration_hr,
+           Study)
+```
+
+```{r}
+# Assuming matched_labeled is your data frame
+matched_labeled %>% 
+  distinct(chem, species_name, sex, steady_state_reach, 
+           t_steady_state_hr, Exposure_duration_hr) %>% 
+  ggplot(aes(x = sex, 
+             y = Exposure_duration_hr, 
+             fill = sex)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_hline(aes(yintercept = t_steady_state_hr, 
+                 color = sex), 
+             linetype = "dotted", 
+             size = 1.5) +
+  scale_y_log10() +
+  facet_grid(species_name ~ chem) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_color_brewer(palette = "Dark2") +
+  labs(x = "Sex", 
+       y = "Time (hours)", 
+       fill = "Sex",
+       color = "Steady State",
+       title = "Exposure Duration and Time to Steady State by Chemical, Species, and Sex") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        panel.grid.major = element_line(color = "grey90"))
+
+```
+
+Although the time to steady state value is missing for PFHXA in Mice, we
+can safeuly assume the study (t = 1488 hr) was steady-state based on the
+values in rats.
+
+# Dose to Serum
+
+We will use previously-defined functions to estimate serum
+concentrations from administered dosages. See dose_to_serum_pfhpa.Rmd
+for an example of how this is performed.
+
+```{r}
+dose_to_serum %>% 
+  distinct(chem, Study, sex, species_name, Doses)
+```
+
+## Steady-State Assumption
+
+```{r}
+matched_deterministic <- matched_labeled %>% 
+  mutate(F = 1) %>%  #assume full bioavailability for all chemicals
+  pivot_longer(cols = c(Dose_zero, Dose_A, Dose_B, Dose_C, Dose_D, 
+                        Dose_E),
+               values_to = "Dose_mg_kg_d",
+               names_to = "dose_letter") %>%
+  #calcualte serum levels from total clearance
+  mutate(serum_mg_L = CssFnx(dose_mg_kg = Dose_mg_kg_d,
+                                          F_frac = F, tau_day = 1, 
+                                          ClTot_L_kg_day = CLTot_L_kg_day)) %>% 
+  drop_na(Dose_mg_kg_d)
+  
+matched_deterministic
+```
+
+```{r}
+matched_deterministic %>% 
+  distinct(Study, chem, sex, species_name, strain, Exposure_duration_hr, 
+           dosing_interval,
+           Dose_mg_kg_d) %>% 
+    group_by(chem, sex, species_name, strain, Exposure_duration_hr, Study, 
+           #dosing_interval, 
+           Dose_mg_kg_d) %>%
+  filter(n() > 1) %>% 
+  arrange(desc(Study))
+```
+
+## Visualize
+
+```{r}
+library(cols4all)
+
+scatter <- matched_deterministic %>% 
+  mutate(species_sex = paste0(species_name, " (", sex, ")")) %>% 
+  ggplot(aes(x = Dose_mg_kg_d,
+             y = serum_mg_L,
+             color = chem,
+             shape = species_sex,
+             text = paste0("chemical: ", chem,
+                           "<br>Species: ", species_name,
+                           "<br>Sex: ", sex,
+                           "<br>Dose (mg/kg-d): ", Dose_mg_kg_d,
+                           "<br>Estimated Cserum_SS: ", round(serum_mg_L, 3),
+                           "<br>Clearance (L/kg-d): ", round(CLTot_L_kg_day, 3),
+                           "<br>Study: ", Study#,
+                           #"<br>Strain: ", strain.x,
+                          # "<br>TK study strain: ", strain.y,
+                           #"<br>Route: ", route.x,
+                          # "<br>TK study route: ", route.y
+                          ))) +
+  geom_point(size = 4,
+             alpha = 0.8) +
+  # cols4all::scale_color_discrete_c4a_cat(#palette = "wes.bottle_rocket2",
+  #                                        name = "Chemical") +
+  scale_shape_discrete(name = "Organism (sex)") +
+  scale_x_log10("Administered Dose (mg/kg-d)",
+                labels = scales::comma_format()) +
+  scale_y_log10("Estimated CPlasma_ss (mg/L)"
+                ) +
+  theme_minimal(base_size = 15)
+
+
+
+# ggsave( "figures/CssPlasma.jpg",
+#         scatter,
+#         width = 11, height = 5,
+#        dpi = 300)
+
+scatter
+```
+
+```{r}
+scatterPlotly <- ggplotly(scatter,
+                          tooltip = "text")
+
+# Save the Plotly plot to an HTML file
+#saveWidget(scatterPlotly, "figures/scatterPlotly.html", selfcontained = TRUE)
+
+scatterPlotly
+```
+
+## Time-weighted average approach
+
+The pharmacokinetic profile of a compound is crucial for understanding
+its efficacy and safety. One key measure is the time-weighted average
+concentration (TWA), which provides an integrated view of drug exposure
+over a dosing interval. This is particularly important for compounds
+with frequent dosing schedules, where steady-state assumptions might not
+adequately capture the variability in drug concentration.
+
+The elimination rate constant ($k$) was calculated using the half-life
+($t_{1/2}$) of the compound:
+
+$$ k = \frac{\ln(2)}{t_{1/2}} = \frac{\ln(2)}{5 \, \text{hours}} = 0.1386 \, \text{hr}^{-1} $$
+
+### Peak and Trough Concentrations
+
+The peak concentration ($C_{\text{max}}$) immediately after dosing was
+determined by:
+
+$$ C_{\text{max}} = \frac{D \times F}{V_d} $$
+
+Assuming a volume of distribution ($V_d$) of 1 L/kg, we obtain:
+
+$$ C_{\text{max}} = \frac{1 \, \text{mg/kg-day} \times 1}{1 \, \text{L/kg}} = 1 \, \text{mg/L} $$
+
+The trough concentration ($C_{\text{min}}$) just before the next dose
+was calculated using the elimination rate constant:
+
+$$ C_{\text{min}} = C_{\text{max}} \times e^{-k \times \tau} $$
+
+$$ C_{\text{min}} = 1 \, \text{mg/L} \times e^{-0.1386 \times 24} = 1 \, \text{mg/L} \times e^{-3.3264} \approx 0.0358 \, \text{mg/L} $$
+
+### Time-Weighted Average Concentration
+
+The time-weighted average concentration ($C_{\text{avg}}$) over the
+dosing interval was calculated as the average of $C_{\text{max}}$ and
+$C_{\text{min}}$:
+
+$$ C_{\text{avg}} = \frac{C_{\text{max}} + C_{\text{min}}}{2} = \frac{1 \, \text{mg/L} + 0.0358 \, \text{mg/L}}{2} \approx 0.518 \, \text{mg/L} $$
+
+```{r}
+#calculate Cmax at steady-state
+C_max_ss <- function(Dose, F, Vd, k_a, k_e, tau, n) {
+  if (!is.na(k_a)) {  # Full model with absorption rate constant
+    C_max <- (Dose * F * k_a) / (Vd * (k_a - k_e)) * 
+             ((1 - exp(-n * k_e * tau)) / (1 - exp(-k_e * tau)) - 
+              (1 - exp(-n * k_a * tau)) / (1 - exp(-k_a * tau)))
+  } else {  # Simplified model for rapid absorption or IV bolus
+    C_max <- (Dose * F) / (Vd * (1 - exp(-k_e * tau)))
+  }
+  return(C_max)  # mg/L
+}
+
+# Function to calculate pharmacokinetic parameters
+calculate_ss_values <- function(dose_mg_kg_d, F_frac, Vd_L_kg, 
+                                clearance_L_kg_d, kabs, half_life_hr, tau_hr,
+                          n_doses) {
+  # Elimination rate constant
+  k_e <- log(2) / half_life_hr
+  
+  dose_mg_kg_d <- dose_mg_kg_d
+  
+  # Peak concentration (Cmax) immediately after the dose
+  Cmax_ss <- C_max_ss(Dose = dose_mg_kg_d,
+                      F = F_frac,
+                      Vd = Vd_L_kg,
+                      k_a = kabs,
+                      k_e = k_e,
+                      tau = tau_hr,
+                      n = n_doses)
+  
+  # Trough concentration (Cmin) just before the next dose
+  Cmin_ss <- Cmax_ss * exp(-k_e * tau_hr)
+  
+  #Average concentration at steady state
+  C_avg_ss <- (dose_mg_kg_d * F_frac) / (clearance_L_kg_d * tau_hr)
+  
+  #calculate area under the curve (mg)
+  AUC_ss <- (dose_mg_kg_d * F_frac) / clearance_L_kg_d
+  
+  # Return results as a named list
+  return(list(Cmax_ss = Cmax_ss, Cmin_ss = Cmin_ss, C_avg_ss = C_avg_ss, AUC_ss = AUC_ss))
+}
+
+
+# estimate daily dose based on measured serum concentrations for negative controls to add as background contamination to all doses in those studies
+serum_to_dose <- function(C_serum, Vd, ke) {
+  # Calculate the daily dose (mg/kg/day)
+  daily_dose <- C_serum * Vd * ke
+  return(daily_dose)
+}
+
+
+
+twa_df <- matched_labeled %>% 
+  distinct() %>% 
+  mutate(F = 1) %>%  #assume full bioavailability for all chemicals
+  #### Pivot doses
+  pivot_longer(cols = c(Dose_zero, Dose_A, Dose_B, Dose_C, Dose_D, Dose_E),
+               values_to = "Dose_mg_kg_d",
+               names_to = "dose_letter") %>%
+  drop_na(Dose_mg_kg_d) %>% 
+    rowwise() %>%
+  mutate(calculations = list(calculate_ss_values(dose_mg_kg_d = Dose_mg_kg_d,
+                                                 F_frac = F, 
+                                                 Vd_L_kg = VDss_L_kg, 
+                                                 clearance_L_kg_d = CLTot_L_kg_day, 
+                                                 kabs = kabs, 
+                                                 half_life_hr = HLe_invivo, 
+                                                 tau_hr = tau_hr,
+                                                 n_doses = n_doses))) %>% 
+  
+  
+  ## Model background contamination from control dose serum (when avilable)
+  mutate(background_daily_dose = serum_to_dose(C_serum = Serum_zero, 
+                                               Vd = as.numeric(VDss_L_kg),
+                                               ke =  as.numeric(log(2) / HLe_invivo))) %>%   # Calculate elimination constant from half-life))  # Calculate background daily dose
+  #first save a copy of the original dose
+  mutate(Dose_mg_kg_d_OG = Dose_mg_kg_d) %>% 
+  #now make the new dose include background
+  mutate(Dose_mg_kg_d = case_when(
+    is.na(background_daily_dose) ~ Dose_mg_kg_d,
+    !is.na(background_daily_dose) ~ Dose_mg_kg_d + background_daily_dose,
+  )) %>% 
+    unnest_wider(calculations) %>%
+  ungroup() 
+
+twa_df
+```
+
+```{r}
+twa_df %>% 
+  select(Study, dose_letter, C_avg_ss, Cmax_ss, chem, species_name, strain, route, sex,  Dose_mg_kg_d) %>% 
+  filter(Dose_mg_kg_d > 0) %>% 
+  arrange(desc(C_avg_ss))
+```
+
+In some studies, control (zero dose) groups show measured serum levels
+above detection limits, indicating possible background contamination
+from food, water, or air. To account for this contamination, we need to
+estimate the background daily dose from the serum levels in control
+animals and adjust the administered doses accordingly.
+
+1.  **Estimate Daily Dose**: Using measured serum concentrations and
+    pharmacokinetic parameters (e.g., volume of distribution `Vd` and
+    elimination rate constant `ke`), estimate the background daily dose
+    that could explain the serum levels in control animals.
+
+    The formula for estimating the daily dose is:
+
+    $$
+    \text{Dose}_{\text{daily}} = \text{C}_{\text{serum}} \times \text{Vd} \times \text{ke}
+    $$
+
+    Where:
+
+    -   $\text{C}_{\text{serum}}$ is the measured serum concentration.
+    -   $\text{Vd}$ is the volume of distribution.
+    -   $\text{ke}$ is the elimination rate constant.
+
+2.  **Apply Background Dose to Administered Doses**: Once the background
+    daily dose is estimated, add it to the administered doses in all
+    studies to account for the background contamination.
+
+```{r}
+# Plot the results
+results_long <- twa_df %>%
+  pivot_longer(cols = c(Cmax_ss, Cmin_ss, C_avg_ss, AUC_ss),
+               names_to = "Metric", values_to = "Concentration")
+
+TWA_scatter <- results_long %>% 
+  filter(Dose_mg_kg_d > 0) %>% 
+  mutate(species_sex = paste0(species_name, " (", sex, ")")) %>% 
+  filter(Metric == "C_avg_ss") %>% 
+ggplot(aes(x = Dose_mg_kg_d, y = Concentration, color = chem, shape = species_sex)) +
+ # geom_line() +
+  geom_point(size = 4,
+             alpha = 0.8) +
+  # cols4all::scale_color_discrete_c4a_cat(palette = "wes.bottle_rocket2",
+  #                                        name = "Chemical") +
+  scale_shape_discrete(name = "Organism (sex)") +
+  scale_x_log10("Administered Dose (mg/kg-d)",
+                labels = scales::comma_format()) +
+  scale_y_log10("Estimated CPlasma_ss (mg/L)"
+                ) +
+  labs(
+    title = "Time-Weighted Average Plasma Concentrations",
+    x = "Dose (mg/kg-day)",
+    y = "Average Plasma Concentration (mg/L)",
+    color = "Metric"
+  ) +
+  theme_minimal(base_size = 15)
+
+# ggsave( "figures/TWA_scatter.jpg",
+#         TWA_scatter,
+#         width = 11, height = 5,
+#        dpi = 300)
+
+TWA_scatter
+```
+
+#### TWA vs. Css
+
+```{r}
+# Difference plot to show the difference between steady-state average concentration and TWA-estimated concentrations
+difference_plot <- twa_df %>%
+  mutate(species_sex = paste0(species_name, " (", sex, ")")) %>% 
+  mutate(percent_difference = ((C_avg_ss - AUC_ss) / C_avg_ss) * 100) %>% 
+  distinct(percent_difference, .keep_all = T) %>% 
+  ggplot(aes(x = HLe_invivo, y = percent_difference, color = chem, shape = species_sex,
+             text = paste0("chemical: ", chem,
+                           "<br>Species: ", species_name,
+                           "<br>Dose: ", Dose_mg_kg_d, " (mg/kg-d)",
+                           "<br>Estimated Css: ", signif(C_avg_ss, 3), " mg/L",
+                           "<br>Estimated AUC_ss (TWA): ", signif(AUC_ss, 3), " mg/L",
+                           "<br>Percent Difference:", signif(percent_difference, 3), " %",
+                           "<br>Total Clearance: ", signif(CLTot_L_kg_day, 3), " (L/kg-d)",
+                           "<br>Half-life: ", HLe_invivo, " hr",
+                           "<br>VDss: ", signif(VDss_L_kg,3), "L/kg",
+                           "<br>Study: ", Study,
+                           "<br>Sex: ", sex,
+                           "<br>Strain: ", strain,
+                           "<br>Route: ", route,
+                           "<br>Clearance mismatches: ", mismatches_CL,
+                           "<br>Half-Life mismatches: ", mismatches_HLe,
+                           "<br>Volume of Distribution mismatches: ", mismatches_VDss,
+                           "<br>Clearance tissue: ", tissue_CL,
+                           "<br>Half Life tissue: ", tissue_HLe,
+                           "<br>VD tissue: ", tissue_VDss
+                           ))) +
+  geom_point(size = 4, alpha = 0.8) +
+  #cols4all::scale_color_discrete_c4a_cat(palette = "wes.bottle_rocket2", name = "Chemical") +
+  scale_shape_discrete(name = "Organism (sex)") +
+  scale_x_log10("Elimination Half-Life (hr)", labels = scales::comma_format()) +
+ scale_y_continuous("Percent Difference (%)", labels = scales::percent_format(scale = 1)) +
+  labs(
+    title = "Percent Difference Between Steady-State and TWA-Estimated Plasma Concentrations",
+    x = "Administerd Daily Dose (mg/kg-day)",
+    y = "Percent Difference (%)"
+  ) +
+  theme_minimal()
+
+
+# ggsave( "figures/difference_plot.jpg",
+#         difference_plot,
+#         width = 11, height = 5,
+#        dpi = 300)
+
+difference_plot
+```
+
+```{r}
+percentDifferencePlotly <- ggplotly(difference_plot,
+                                    tooltip = "text")
+
+# Save the Plotly plot to an HTML file
+#saveWidget(percentDifferencePlotly, "figures/percentDifferencePlotly.html", selfcontained = TRUE)
+
+percentDifferencePlotly
+```
+
+```{r}
+twa_df_2 <- twa_df %>% mutate(percent_difference = ((C_avg_ss - AUC_ss) / C_avg_ss) * 100)
+  
+model <- lm(percent_difference ~ CLTot_L_kg_day + HLe_invivo + VDss_L_kg, data = twa_df_2)
+summary(model)
+```
+
+### Save Dataset
+
+```{r}
+#  twa_df_2 %>%
+#   arrange(Dose_mg_kg_d) %>%
+#   write.csv("data_output/serum_pfas_estimate.csv")
+             
+```
+
+# Comparison with PFAS PBPK Model
+
+Chou & Lin (2019); Environment International developed a bayesian MCMC
+optimized PBPK model for PFOS
+
+C_TWA is estiamted for PFOS in the PFOS_PBPK_fork repo shiny app
+
+# Uncertainty Analysis
+
+The TK data extracted from EAS-E Suite lacks variability (e.g., standard
+deviations). Accordingly, I need to mine this data from those studies.
+Below I will match this auxiliary dataset to the existing dataframe, and
+perform Monte Carlo calculations to propagate uncertainty.
+
+## Match auxiliary data
+
+```{r}
+aux_data <- readxl::read_excel(here("data_input/pfas_tk_auxiliary.xlsx")) %>% 
+  mutate_at(vars(4:9), ~as.numeric(as.character(.))) %>% 
+  mutate_at(vars(12:15), ~as.numeric(as.character(.))) %>% 
+  select(-c(CLApp_L_kg_day.x, CLRen_L_kg_day.x, CLTot_L_kg_day.x)) %>% 
+  rename(CLTot_L_kg_day_sd = CLTot_L_kg_day_sd.x,
+         CLRen_L_kg_day_sd = CLRen_L_kg_day_sd.x,
+         CLApp_L_kg_day_sd = CLApp_L_kg_day_sd.x,
+         CLTot_L_kg_day = CL) %>% 
+  mutate(pubmed_id = as.character(pubmed_id))
+
+#join data
+matched_sd <- left_join(matched_labeled, aux_data,
+                        by = c("chem", "species_name", "sex",
+                               "CLTot_L_kg_day"
+                               )) %>% 
+
+  pivot_longer(cols = c(Dose_A, Dose_B, Dose_C, Dose_D),
+               values_to = "Dose_mg_kg_d") %>% 
+  drop_na(Dose_mg_kg_d)
+
+```
+
+## Define functions
+
+```{r}
+library(purrr)
+
+set.seed(1234)
+# define number of simulations
+n_sim <- 1e3
+
+
+logNormalfnx <- function(m,std){
+    y = 1+std^2/m^2
+    mu = log(m/sqrt(y))
+    sigma = sqrt(log(y))
+    
+    logNormal <- list(mu,sigma)
+
+    return(logNormal)
+}
+
+# functions for computing lognormal params from mu and sigma
+mu_logNormal_function <- function(mu, sigma){
+  mu_logNormal <- log(mu^2 / sqrt(sigma^2 + mu^2))
+  mu_logNormal
+}
+
+sigma_logNormal_function <- function(mu, sigma){
+  sigma_logNormal <- sqrt(log(1 + (sigma^2 / mu^2)))
+  sigma_logNormal
+}
+
+
+# Monte Carlo function that excludes bioavailable fraction
+monte_carlo_noF <- function(df, n_sim) {
+  simulations <- map_dfr(1:n_sim, function(i) {
+  df %>%
+      drop_na(CLTot_L_kg_day_sd) %>% 
+      filter(Dose_mg_kg_d > 0) %>% 
+      mutate(
+        # Calculate meanlog and sdlog
+        meanlog_clearance_total = mu_logNormal_function(CLTot_L_kg_day, CLTot_L_kg_day_sd),
+        sdlog_clearance_total = sigma_logNormal_function(CLTot_L_kg_day, CLTot_L_kg_day_sd),
+        #simulate total clearance using log-normal distribution
+        CLTot_L_kg_day_sim = rlnorm(n(),meanlog_clearance_total, sdlog_clearance_total),
+        #estimate Css
+        Css_mg_L = CssFnx(dose_mg_kg = Dose_mg_kg_d,
+                           ClTot_L_kg_day = CLTot_L_kg_day_sim,
+                           F_frac = 1,
+                           tau_day = 1)) %>% 
+    
+      mutate(simulation = i)
+
+  })
+  
+  simulations
+}
+```
+
+## Perform Monte Carlo
+
+```{r}
+monte_carlo_PFAS_results <- monte_carlo_noF(matched_sd, n_sim)
+
+# saveRDS(monte_carlo_PFAS_results, 
+#         "../../output/data/dose_to_serum/monte_carlo_PFAS_results.rds")
+
+skimr::skim(monte_carlo_PFAS_results)
+
+```
+
+## Visualize results
+
+```{r}
+# Modify the dose_mg_kg labels to include units
+monte_carlo_PFAS_results %>%
+  mutate(species_sex = paste0(species_name, " (", sex, ")")) %>% 
+  # group_by(chem, species_sex, Study, Dose_mg_kg_d) %>% 
+  # summarize(mean_Css_mg_L = mean(Css_mg_L),
+  #           sd_Css_mg_L = sd(Css_mg_L))
+  ggplot(aes(x = Dose_mg_kg_d,
+             y = Css_mg_L,
+             color = chem,
+             shape = species_sex,
+             text = paste0("chemical: ", chem,
+                           "<br>Species: ", species_name,
+                           "<br>Sex: ", sex,
+                           "<br>Dose (mg/kg-d): ", Dose_mg_kg_d,
+                           "<br>Estimated Cserum_SS: ", round(Css_mg_L, 3),
+                           "<br>Study: ", Study#,
+                          # "<br>Strain: ", strain.x,
+                           #"<br>TK study strain: ", strain.y,
+                           #"<br>Route: ", route.x,
+                          # "<br>TK study route: ", route.y
+                          ))) +
+  geom_boxplot(size = 5) +
+  #geom_point(size = 4,
+   #          alpha = 0.8) +
+  cols4all::scale_color_discrete_c4a_cat(palette = "wes.bottle_rocket2",
+                                         name = "Chemical") +
+  scale_shape_discrete(name = "Organism (sex)") +
+  scale_x_log10("Administered Dose (mg/kg-d)",
+                labels = scales::comma_format()) +
+  scale_y_log10("Estimated CPlasma_ss (mg/L)"
+                ) +
+   theme_minimal(base_size = 15) 
+```
+
+# Multiple Dose Administration Approach
+
+Below is an approach to estimating plasma concentration for a chemical
+administered via oral dosing under the following assumptions: -
+Bioavailability (F) is 100%. - There is no metabolism. - Absorption rate
+constant ($k_a$) may or may not be known.
+
+We will explore two approaches: 1. **Simplified Model**: Assuming rapid
+absorption, where absorption occurs so quickly that it can be ignored.
+2. **Full Model**: Incorporating the absorption rate constant ($k_a$)
+into the calculation.
+
+### Assumptions
+
+-   $D$: Dose administered (mg)
+-   $F$: Bioavailability (fraction, assumed 100% or $F = 1$)
+-   $k_e$: Elimination rate constant (1/h)
+-   $k_a$: Absorption rate constant (1/h), if known
+-   $V_d$: Volume of distribution (L)
+-   $\tau$: Dosing interval (h)
+-   $n$: Number of doses
+-   $t$: Time after the last dose (h)
+
+### Simplified Model: Fast Absorption
+
+For rapid absorption, the concentration at time $t$ following $n$ doses
+can be calculated using the following equation:
+
+$$
+C = \frac{D}{V_d} \cdot \left( \frac{1 - e^{-n \cdot k_e \cdot \tau}}{1 - e^{-k_e \cdot \tau}} \right) \cdot e^{-k_e \cdot t}
+$$
+
+This model assumes that the absorption rate is much faster than the
+elimination rate, so we omit the absorption term.
+
+### Full Model: Including Absorption Rate Constant
+
+If we have an estimate for the absorption rate constant ($k_a$), the
+following equation can be used:
+
+$$
+C = \frac{D \cdot k_a}{V_d (k_a - k_e)} \cdot \left( \frac{e^{-k_e \cdot t}}{1 - e^{-k_e \cdot \tau}} - \frac{e^{-k_a \cdot t}}{1 - e^{-k_a \cdot \tau}} \right)
+$$
+
+### Example
+
+This equation accounts for both absorption and elimination and provides
+a more accurate estimate when absorption is not instantaneous.
+
+```{r}
+# Parameters for the model
+Dose_mg_kg_d <- 100   # Total daily dose (mg/kg)
+HLe_invivo <- 6       # Half-life in hours
+tau_hr <- 12          # Dosing interval in hours
+Vd <- 50              # Volume of distribution (L/kg)
+kabs <- 0.5           # Absorption rate constant (1/h)
+exposure_duration_hr <- 72  # Exposure duration in hours
+n_extra_time <- 48     # Extra time to simulate after exposure (hours)
+
+# Calculate dynamic parameters
+ke <- log(2) / HLe_invivo                              # Elimination rate constant from half-life
+num_doses_per_day <- 24 / tau_hr                       # Number of doses administered per 24 hours
+D_per_dose <- Dose_mg_kg_d / num_doses_per_day         # Dose per administration (split total daily dose)
+n <- floor(exposure_duration_hr / tau_hr)              # Number of doses administered during exposure period
+
+
+
+## Updated version
+# Function for single-compartment model
+simplified_conc <- function(D_per_dose, Vd, ke, tau, n, t, exposure_duration_hr) {
+  # Calculate concentration at each time point
+  concentration <- numeric(length(t))
+  for (i in 1:n) {
+    dose_time <- (i - 1) * tau
+    concentration <- concentration + (D_per_dose / Vd) * exp(-ke * (t - dose_time)) * (t >= dose_time)
+  }
+
+  return(concentration)
+}
+
+# # Function for two-compartment model
+# full_conc <- function(D_per_dose, Vd, ke, ka, tau, n, t, exposure_duration_hr) {
+#   # Calculate concentration at each time point
+#   concentration <- numeric(length(t))
+#   for (i in 1:n) {
+#     dose_time <- (i - 1) * tau
+#     # Absorption phase
+#     concentration <- concentration + (D_per_dose / Vd) * (ka / (ka - ke)) *
+#       (exp(-ke * (t - dose_time)) - exp(-ka * (t - dose_time))) * (t >= dose_time)
+#   }
+# 
+#   return(concentration)
+# }
+
+# Function for two-compartment model (updated to handle edge cases that cause numerical instability)
+full_conc <- function(D_per_dose, Vd, ke, ka, tau, n, t, exposure_duration_hr) {
+  # Calculate concentration at each time point
+  concentration <- numeric(length(t))
+  # Calculate concentrations for each dose administered
+  for (i in 1:n) {  # Loop over each dose (from 1 to n)
+    dose_time <- (i - 1) * tau  # Calculate the time at which the current dose is administered
+    for (j in 1:length(t)) {  # Loop over each time point in the defined sequence
+      if (t[j] >= dose_time) {  # Check if the current time point is greater than or equal to the dose time
+        if (ka != ke) {  # Ensure that the absorption rate constant is not equal to the elimination rate constant
+          exp_ke <- exp(-ke * (t[j] - dose_time))  # Calculate the exponential term for elimination
+          exp_ka <- exp(-ka * (t[j] - dose_time))  # Calculate the exponential term for absorption
+          if (is.finite(exp_ke) && is.finite(exp_ka)) {  # Check if both exponential calculations are finite
+            # Update the concentration at the current time point using the pharmacokinetic formula
+            concentration[j] <- concentration[j] + (D_per_dose / Vd) * (ka / (ka - ke)) *
+              (exp_ke - exp_ka)  # Add the contribution of the current dose to the concentration
+          }
+        } else {
+        # If ka equals ke, handle it here
+        concentration[j] <- concentration[j] + (D_per_dose / Vd) * ka * (t[j] - dose_time) * exp(-ke * (t[j] - dose_time))
+      }
+    }
+    }
+  }
+  return(concentration)
+}
+
+
+# Time points: Exposure duration + extra time
+time_points <- seq(0, exposure_duration_hr + n_extra_time, by = 1)  # Time points from 0 to (exposure_duration + extra time)
+
+# Calculate concentrations using simplified and full models, including extra time
+simplified_concentrations <- sapply(time_points, function(t) simplified_conc(D_per_dose, Vd, ke, tau_hr, n, t, exposure_duration_hr))
+full_concentrations <- sapply(time_points, function(t) full_conc(D_per_dose, Vd, ke, kabs, tau_hr, n, t, exposure_duration_hr))
+
+# Create a data frame for plotting
+concentration_data <- data.frame(
+  Time = time_points,
+  Simplified = simplified_concentrations,
+  Full = full_concentrations
+)
+
+
+```
+
+Example visualization of concentration time-series
+
+```{r}
+# Plotting the concentration-time curve
+concentration_plot <- ggplot(concentration_data, aes(x = Time)) +
+  geom_point(aes(y = Simplified, color = "Simplified Model")) +
+  geom_point(aes(y = Full, color = "Full Model")) +
+  geom_line(aes(y = Simplified, color = "Simplified Model"), size = 1.2) +
+  geom_line(aes(y = Full, color = "Full Model"), linetype = "dashed", size = 1.2) +
+  labs(title = "Time-Series Concentration with Exposure Duration (Simplified vs Full Model)", 
+       x = "Time (hours)", 
+       y = "Concentration (mg/L)") +
+  scale_color_manual(name = "Model Type", values = c("Simplified Model" = "blue", "Full Model" = "red")) +
+  theme_minimal(base_size = 15)
+
+# Print the plot
+concentration_plot
+```
+
+## Comparison of Ka and Ke values for PFAS
+
+To determine whether absorption occurs rapidly enough to use this
+simplifed equation for PFAS which do not have Ka values, we can compare
+the Ke and Ka values for PFAS that we have available.
+
+```{r}
+# Step 1: Filter the data for 'kabs' (Ka) and 'ke_invivo' (Ke)
+kabs_data <- tk_pfas %>%
+  filter(standard_endpoint == "kabs") %>% 
+  pivot_wider(names_from = standard_endpoint,
+              values_from = standard_value)
+
+ke_data <- tk_pfas %>%
+  filter(standard_endpoint == "ke_invivo") %>% 
+  pivot_wider(names_from = standard_endpoint,
+              values_from = standard_value)
+
+# Step 2: Merge the two datasets by the specified matching criteria
+# Merging by species_name, tissue, route, and sex to match Ka with Ke
+matched_data <- kabs_data %>%
+  inner_join(ke_data,
+             by = c("species_name", "tissue", "route", "sex", "chem"))
+
+# Step 3: Calculate ratios or differences between Ka and Ke
+# Example: Calculate the ratio of Ka/Ke for comparison
+matched_data <- matched_data %>%
+  mutate(ka_ke_ratio = kabs / ke_invivo)
+
+# Step 4: Summarize the results or make comparisons
+# Example: Summary by species and route
+summary_results <- matched_data %>%
+  group_by(chem, sex, species_name, route, tissue) %>%
+  summarise(mean_ka_ke_ratio = mean(ka_ke_ratio, na.rm = TRUE),
+            sd_ka_ke_ratio = sd(ka_ke_ratio, na.rm = TRUE)) %>% 
+  mutate(across(where(is.numeric), ~signif(.,3)))
+
+# View the summarized results
+print(summary_results)
+```
+
+```{r}
+ka_ke_ratio_column <- summary_results %>% 
+  ggplot(aes(x = mean_ka_ke_ratio, y = chem, 
+             fill = species_name, shape = tissue)) +
+  geom_col(position = "dodge",
+           color = "black") +
+  labs(x = "Ka / Ke ratio",
+       y = "Chemical") +
+  scale_fill_discrete_c4a_div(name = "Species") +
+  theme_minimal(base_size = 16)
+
+
+# ggsave( "figures/ka_ke_ratio_column.jpg",
+#         ka_ke_ratio_column,
+#         width = 11, height = 5,
+#        dpi = 300)
+
+ka_ke_ratio_column
+```
+
+Visualilze results
+
+```{r}
+matched_data %>% 
+  ggplot(aes(x = kabs, y = ke_invivo, color = species_name, shape = sex)) +
+  geom_point() +
+  facet_wrap(~ tissue + route) +
+  labs(title = "Ka vs Ke Comparison",
+       x = "Ka (kabs_value)",
+       y = "Ke (ke_value)")
+```
+
+## Biphasic Model including alpha and beta phases
+The biphasic model for PFAAs that are known to follow such kinetic profile (e.g., GenX, PFOA, PFBS, PFOS) is as follows (doi.org/10.1016/j.envint.2018.01.011):
+### Equation (2): α Phase
+
+The serum concentration during the α phase is given by:
+
+$$
+C_{\text{serum}, \alpha}(t) = \frac{F \cdot \left(\frac{D}{U}\right) \cdot k_a}{Vd_0 \cdot (k_a - k_d)} \cdot \left(e^{-t \cdot k_d} - e^{-t \cdot k_a}\right), \quad t \in [0, t_{\alpha,\text{end}}]
+$$
+
+Where:
+- \( F \): Bioavailable fraction (unitless)
+- \( D \): Administered dose (\(\mu g / \text{kg-bw/day}\))
+- \( U \): Unit conversion factor (\(24 \, \text{h/day}\))
+- \( Vd_0 \): Volume of distribution at time 0 (\(\text{ml/kg}\))
+- \( k_a \): Absorption rate (\(1/\text{h}\))
+- \( k_d \): Distribution rate into peripheral tissues (\(1/\text{h}\))
+- \( t_{\alpha,\text{end}} \): Time corresponding to the end of the α phase
+
+---
+
+### Equation (3): β Phase
+
+The serum concentration during the β phase is given by:
+
+$$
+C_{\text{serum}, \beta}(t) = C_{\text{serum}, \alpha}(t_{\alpha,\text{end}}) \cdot e^{-t \cdot k_e}, \quad t \in [t_{\alpha,\text{end}}, t_{\text{end}}]
+$$
+
+Where:
+- \( C_{\text{serum}, \beta}(t) \): Serum concentration during the β phase (\(\mu g / \text{ml}\))
+- \( C_{\text{serum}, \alpha}(t_{\alpha,\text{end}}) \): Serum concentration at the end of the α phase (\(\mu g / \text{ml}\))
+- \( k_e \): Elimination rate (\(1/\text{h}\))
+- \( t_{\text{end}} \): Time corresponding to the end of the experiment
+
+```{r}
+# Define a function to calculate serum concentration for a given compound
+calculate_serum_concentration <- function(time, params) {
+  # Extract parameters
+  Frac <- params$Frac
+  D <- params$D
+  U <- params$U
+  Vd_0 <- params$Vd_0
+  k_a <- params$k_a
+  k_d <- params$k_d
+  k_e <- params$k_e
+  t_alpha_end <- params$t_alpha_end
+  
+  # Function for α phase concentration (Eq. 2)
+  C_serum_alpha <- function(t) {
+    if (t <= t_alpha_end) {
+      ((Frac * (D / U) * k_a) / (Vd_0 * (k_a - k_d))) * (exp(-t * k_d) - exp(-t * k_a))
+    } else {
+      NA
+    }
+  }
+  
+  # Function for β phase concentration (Eq. 3)
+  C_serum_beta <- function(t) {
+    if (t > t_alpha_end) {
+      C_alpha_end <- C_serum_alpha(t_alpha_end)
+      C_alpha_end * exp(-k_e * (t - t_alpha_end))
+    } else {
+      NA
+    }
+  }
+  
+  # Calculate serum concentrations for all time points
+  C_serum <- sapply(time, function(t) {
+    if (t <= t_alpha_end) {
+      C_serum_alpha(t)
+    } else {
+      C_serum_beta(t)
+    }
+  })
+  
+  return(C_serum)
+}
+```
+
+```{r}
+# Define parameters for each compound
+# Gomis et al. (2018), Environment International
+compounds_data <- data.frame(
+  Compound = c("PFBA", "PFHxA", "GenX", "PFOA", "PFBS", "PFOS"),
+  Study = c("Chang et al. 2008", "Chengelis et al. 2009a", "Gannon et al. 2016", 
+            "Ohmori et al. 2003", "Olsen et al. 2009", "Kim et al. 2016"),
+  Administration = c("Oral/single", "Oral/single", "Oral/single", 
+                     "IV/single", "Oral/single", "Oral/single"),
+  Frac = 1,
+  kabs = c(3, 2.4, 3.3, NA, 7, 0.4),
+  VD2 = c(0.200, 0.600, 0.154, 0.181, 0.242, 0.289), #Vd0_L_kg
+  k_alpha = c(NA, NA, 0.24, 0.45, 0.877, 0.0038),
+  t1_2_alpha_h = c(NA, NA, 2.8, 30, 0.79, 179.9),
+  VDc = c(0.209, 0.175, 0.142, 0.345, 0.676, 0.279), # VDss_L_kg
+  k_beta = c(0.075, 0.288, 0.0096, 0.005, 0.14, 0.001),
+  t1_2_beta_h = c(9.22, 2.4, 72.2, 136.3, 4.68, 643.5)
+)
+
+# Print the dataframe
+print(compounds_data)
+```
+
+Updated equation to match structure of other functions
+```{r}
+two_phase_function <- function(D_per_dose, 
+                               VDc, # VDc: beta phase volume of distribution (steady-state)
+                               #VD_ss in Gomis et al. (2018), but VDc in EASESUITE - beta phase Vd
+                               k_beta, # k_beta: elimination rate constant (beta phase)
+                               #ke in Gomis et al. (2018), but k_beta in EASESUITE
+                               kabs, # kabs: absorption rate constant
+                               VD2, # VD2: alpha phase volume of distribution (initial distribution)
+                               #VD0 in gomis et al. (2018), but VD2 in EASESuite
+                               k_alpha, # k_alpha: distribution rate constant (alpha phase)
+                               #"k_d" in Gomis et al. (2018, but k_alpha in EASESUITE)
+                               tau, # tau: dosing interval
+                               n_doses, # n_doses: number of doses
+                               t, # t: time points
+                               exposure_duration_hr) {
+  # Initialize concentration vector
+  concentration <- numeric(length(t))
+  
+  # Dynamically calculate t_alpha_end
+  t_alpha_end <- if (!is.na(k_alpha) && !is.na(k_beta) && k_alpha > k_beta) {
+    (log(k_alpha) - log(k_beta)) / (k_alpha - k_beta)
+  } else {
+    0  # If k_alpha or k_beta is invalid, set t_alpha_end to 0
+  }
+  
+  # Loop over each dose administered
+  for (i in 1:n_doses) {
+    dose_time <- (i - 1) * tau  # Time at which the current dose is administered
+    
+    # Loop over each time point
+    for (j in 1:length(t)) {
+      if (t[j] >= dose_time) {  # Only calculate for time points after the dose is administered
+        if (t[j] <= dose_time + t_alpha_end) {  # Alpha phase
+          if (!is.na(kabs) && !is.na(k_alpha) && kabs != k_alpha) {
+            exp_k_alpha <- exp(-k_alpha * (t[j] - dose_time))
+            exp_kabs <- exp(-kabs * (t[j] - dose_time))
+            concentration[j] <- concentration[j] + 
+              (D_per_dose / VD2) * (kabs / (kabs - k_alpha)) * (exp_k_alpha - exp_kabs)
+          }
+        } else {  # Beta phase
+          if (!is.na(k_beta)) {
+            # Calculate concentration at the end of the alpha phase
+            C_alpha_end <- if (!is.na(kabs) && !is.na(k_alpha) && kabs != k_alpha) {
+              (D_per_dose / VD2) * (kabs / (kabs - k_alpha)) * 
+                (exp(-k_alpha * t_alpha_end) - exp(-kabs * t_alpha_end))
+            } else {
+              0
+            }
+            # Beta phase concentration
+            concentration[j] <- concentration[j] + 
+              C_alpha_end * exp(-k_beta * (t[j] - dose_time - t_alpha_end))
+          }
+        }
+      }
+    }
+  }
+  
+  return(concentration)
+}
+```
+ Example application 28-day continuous exposure regime with a 100 mg/kg/day dose administered once daily:
+```{r}
+# Define the exposure parameters
+exposure_duration_d <- 4
+exposure_duration_hr <- exposure_duration_d * 24  # 28 days in hours
+dose_mg_kg_d <- 30  # Daily dose in mg/kg/day
+tau_hr <- 24  # Dosing interval in hours
+n_extra_time <- 96  # Additional time after exposure in hours
+
+# Add calculated parameters to the dataframe
+compounds_data_modeled <- compounds_data %>%
+  mutate(
+    D_per_dose = dose_mg_kg_d,  # Dose per administration (once daily)
+    tau = tau_hr,  # Dosing interval
+    n_doses = exposure_duration_d,  # Number of doses (28 days of exposure)
+    time_points = list(seq(0, exposure_duration_hr + n_extra_time, by = 1))  # Time points for modeling
+  ) %>% 
+  # Apply the calculate_serum_concentration function to each compound
+  rowwise() %>%
+  mutate(
+    concentration_time_series = list(
+      tibble(
+        time = time_points,
+        concentration = map_dbl(time_points, ~ two_phase_function(
+          D_per_dose = D_per_dose, 
+          # alpha phase params
+          VD2 = VD2,
+          k_alpha = k_alpha,
+          kabs = kabs,
+          # beta phase params
+          VDc = VDc,
+          k_beta = k_beta,
+          tau = tau,
+          n_doses = n_doses,
+          t = .x,
+          exposure_duration_hr = exposure_duration_hr
+        ))
+      )
+    )
+  ) %>%
+  unnest(concentration_time_series)  # Expand the time series into rows
+
+```
+
+```{r}
+library(ggplot2)
+library(plotly)
+
+# Plot concentration-time profiles for all compounds
+plot <- ggplot(compounds_data_modeled, aes(x = time / 24, y = concentration, color = Compound)) +
+  geom_line() +
+  labs(
+    title = "Concentration-Time Profiles for 28-Day Exposure",
+    x = "Time (Days)",
+    y = "Concentration (mg/L)"
+  ) +
+  theme_minimal() 
+
+ggplotly(plot)
+```
+ 
+
+# Simple multiple dose administration model
+
+```{r}
+
+# Generalized time-concentration function to handle dynamic dosing intervals and split the total daily dose
+simplified_conc_dynamic <- function(D_per_dose, Vd, ke, n, t, dosing_interval) {
+  # Cumulative effect for repeated doses, with D_per_dose administered every dosing_interval hours
+  C <- (D_per_dose / Vd) * ((1 - exp(-n * ke * dosing_interval)) / (1 - exp(-ke * dosing_interval))) * exp(-ke * t)
+  return(C)
+}
+```
+
+## Ensure all rows have requisite data for modelling
+
+```{r}
+twa_df %>% 
+  distinct(chem, species_name, sex,tau_hr, Dose_mg_kg_d, HLe_invivo, VDss_L_kg, VD2, VDc, k_alpha, k_beta,
+           Exposure_duration_hr)
+```
+### How many can use two-phase model?
+```{r}
+twa_df %>% distinct(chem, species_name, sex,
+                    kabs, k_alpha, k_beta, VD2, VDc)
+```
+
+
+## Generate Time-Series Data
+
+```{r}
+#define time to model out to
+n_extra_time <- 96
+
+#Modify the time-concentration calculations to conditionally apply the dosing regimen
+# Modify the time-concentration calculations to handle dynamic dosing interval and split the total dose
+# Updated code with rowwise application of full_conc and simplified_conc functions
+twa_df_multiple <- twa_df %>%
+  mutate(
+    ke = log(2) / HLe_invivo,  # Calculate elimination constant from half-life
+    num_doses_per_day = 24 / tau_hr,  # Calculate the number of doses administered per 24 hours
+    D_per_dose = Dose_mg_kg_d / num_doses_per_day,  # Split the total daily dose evenly by tau
+    kabs = as.numeric(kabs),  # Ensure kabs is numeric
+    VDss_L_kg = as.numeric(VDss_L_kg),  # Ensure Vd is numeric
+    tau = as.numeric(tau_hr),  # Ensure tau is numeric
+    D_per_dose = as.numeric(D_per_dose),  # Ensure dose is numeric
+    ke = as.numeric(ke),  # Ensure ke is numeric
+    n_doses = floor(Exposure_duration_hr / tau)  # Calculate number of doses administered during exposure
+  ) %>%
+  rowwise() %>%
+  mutate(
+    # Generate time points during and after exposure
+    time_points = list(seq(0, Exposure_duration_hr + n_extra_time, by = 1)),
+    
+    # Apply both models and calculate concentrations for each time point
+    concentration_time_series = list(
+      tibble(
+        time = time_points,
+        
+        # Two-phase model (if all alpha/beta phase params are available). 
+        two_phase_conc = if (!is.na(kabs) & !is.na(k_alpha) & !is.na(k_beta) & !is.na(VD2) & !is.na(VDc)){
+        map_dbl(time_points, ~ two_phase_function(D_per_dose = D_per_dose,
+                                                  #alpha phase params
+                                                  VD2 = VD2, #VD0_l/kg
+                                                  k_alpha = k_alpha,
+                                                  kabs = kabs, 
+                                                  #beta phase params
+                                                  k_beta = k_beta,
+                                                  VDc = VDc, #VDss_L/kg
+                                                  tau = tau,
+                                                  n_doses = n_doses, t = .x,
+                                                  # Handle NA for t_alpha_end
+                                                  exposure_duration_hr = exposure_duration_hr
+                                                  ))
+        } else {
+          NA_real_ #if all two-phase params are not present, set to NA
+        },
+        
+        # Full model concentration (if kabs is available)
+        full_model_conc = if (!is.na(kabs)) {
+          map_dbl(time_points, ~ full_conc(D_per_dose, VDss_L_kg, ke, kabs, tau, n_doses, .x, Exposure_duration_hr))
+        } else {
+          NA_real_  # If kabs is not available, set to NA
+        },
+        
+        # Simplified model concentration
+        simple_model_conc = map_dbl(time_points, ~ simplified_conc(D_per_dose, VDss_L_kg, ke, tau, n_doses, .x, Exposure_duration_hr)),
+        
+        # Specify the model used (full or simple)
+        model_used = if (!is.na(kabs)) "full" else "simple",  
+        
+        # Specify model availability (both or only simple)
+        model_availability = if (!is.na(kabs)) { "both" 
+        } else if(!is.na(kabs) & !is.na(k_alpha) & !is.na(k_beta) & !is.na(VD2) & !is.na(VDc)) {"multiple" 
+            }  else { "simple_only" }
+      )
+    )
+  ) %>%
+  unnest(concentration_time_series) %>%
+  mutate(
+    # Use the full model concentration if available, otherwise use the simplified model concentration
+    concentration = ifelse(!is.na(full_model_conc), full_model_conc, simple_model_conc)
+  ) %>%
+  ungroup()
+
+
+
+# Check the resulting dataframe
+#skimr::skim(twa_df_multiple)
+```
+
+### QA/QC
+
+Check to ensure n_doses is correct for each study
+
+```{r}
+twa_df_multiple %>% 
+  distinct(n_doses, num_doses_per_day, Exposure_duration_d,
+           Study, chem, sex, species_name, route, 
+           tau_hr) %>% 
+  arrange(desc(n_doses))
+```
+
+Check to ensure distinct values for chem/sex/species/route
+
+```{r}
+# Find rows with duplicate concentration values
+duplicate_concentration_rows <- twa_df_multiple %>%
+  drop_na(concentration) %>% 
+   group_by(Study, chem, sex, species_name, model_used) %>%
+  slice_max(order_by = time, n = 1) %>%  # Select the row with the maximum (last) time
+  ungroup()  %>% 
+  group_by(concentration) %>%
+  filter(n() > 1) #%>%
+  #ungroup()
+
+# Print the rows with duplicate concentration values
+print(duplicate_concentration_rows)
+
+# Optionally, view the duplicates as a table
+DT::datatable(duplicate_concentration_rows)
+```
+
+Identify studies with missing values
+
+```{r}
+twa_df_multiple %>%
+   group_by(chem, sex, species_name, route,
+            HLe_invivo, CLTot_L_kg_day, VDss_L_kg,
+            Study) %>%
+  summarize(max_conc = max(concentration)) %>% 
+  relocate(max_conc, .before = chem) %>% 
+  arrange(desc(max_conc))
+```
+
+## PBPK Model (PFOS only, Males only)
+### Import model data from PFOS PBPK RShiny App
+The PFOS  PBPK model developed by Chou & Lin (2019)[https://pubmed.ncbi.nlm.nih.gov/31152982/] is implemented in the RShiny application in https://github.com/OEHHA-NTES/PFAS_TK_Shiny. This model was used to estimate serum concentrations of PFOS in male rats for PFOS and is imported below.
+```{r}
+PFOS_PBPK <- read.csv(here("data_input/pfos_pbpk_model_output.csv")) %>% 
+  mutate(dose_letter = paste0("Dose_", dose_letter))
+PFOS_PBPK
+```
+
+#### Add PFOS PBPK Data to time-series data
+
+```{r}
+# first join metadata, then bind rows
+PFOS_PBPK_time_point <- PFOS_PBPK %>% 
+  select(Study, chem, species_name, strain,
+         route, sex, dose_letter, time,
+         # model_used, concentration, 
+         PBPK_model_conc)# %>% 
+  #left_join(twa_df_multiple %>%  select(-c(concentration, model_used)),
+   #         by = c("Study", "strain", "chem", "species_name", "route", "dose_letter", "time", "sex"))
+
+# bind rows
+twa_df_multiple <- left_join(twa_df_multiple,
+                                  PFOS_PBPK_time_point,
+                                  by = c("Study", "strain", "chem",
+                                         "species_name", "route", "dose_letter", "time", "sex")) %>% 
+  mutate(model_availability = case_when(
+    !is.na(PBPK_model_conc) ~ "three",
+    T ~ model_availability
+  ))
+
+# test to confirm proper join
+twa_df_multiple %>% 
+  filter(chem == "PFOS",
+         sex == "M"#,
+         #time == 696
+         ) %>% 
+  drop_na(PBPK_model_conc) %>% 
+  distinct(Study, chem, species_name, strain, model_availability,
+         route, sex, dose_letter, time, simple_model_conc, PBPK_model_conc)
+  #distinct(model_used, concentration, simple_model_conc, PBPK_model_conc)
+```
+
+## Visualize Time series
+
+```{r}
+selected_groups <- twa_df_multiple %>%
+  distinct(Study, chem, sex, species_name, route) %>%  # Get distinct combinations of Study and chem
+  slice_sample(n = 6)  # Randomly sample 11 unique groups
+
+# Step 2: Filter the full dataset to include only the selected groups
+subset_data <- twa_df_multiple %>%
+  filter(paste(Study, chem, species_name,  sex, route) %in% 
+           paste(selected_groups$Study, selected_groups$chem, selected_groups$species_name, selected_groups$sex,
+                 selected_groups$route)) %>%
+  filter(time < 241) %>%  # Limit time to less than 241 hours
+  drop_na(concentration)  # Ensure no missing data is plotted
+
+con_time_plot <- subset_data %>%
+  filter(dose_letter == "Dose_B") %>% 
+  filter(time < 76) %>% 
+  drop_na(concentration) %>%  # Ensure no missing data is plotted
+  ggplot(aes(x = time / 24, y = concentration, color = factor(chem), group = interaction(Study, chem))) +  # Color by chemical, group by study and chemical
+  geom_line(aes(alpha = time), size = 1) +  # Use alpha (transparency) to highlight changes over time
+  geom_point(aes(alpha = time), size = 1) +  # Add points, also adjusting transparency by time
+  geom_vline(aes(xintercept = t_steady_state_hr / 24), linetype = "solid", color = "purple", linewidth = 2, alpha = 0.5) +  # Add vertical dotted line for steady state
+  scale_x_continuous(breaks = seq(0, 10, by = 1), labels = seq(0, 10, by = 1)) +  # Limit the x-axis to the first 10 days
+  scale_alpha(range = c(0.5, 0.8), guide = "none") +  # Set transparency range for time, remove from legend
+  scale_color_discrete(name = "Chemical") +  # Rename the color legend to "Chemical"
+  labs(title = "Concentration-Time Profile with Accumulation (Daily Intervals)", 
+       x = "Time (days)", y = "Concentration (mg/L)") +
+  theme_minimal() +  # Use a clean, minimal theme
+  theme(legend.position = "bottom",  # Move legend to bottom
+        strip.text = element_text(size = 10),  # Adjust facet label size
+        strip.text.x = element_text(angle = 0),  # Ensure labels are horizontal
+        legend.title = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5, size = 14)) +  # Center the title
+  facet_wrap(~Study + sex, scales = "free", labeller = label_wrap_gen(width = 25))  # Wrap long facet labels
+
+
+# ggsave( "figures/con_time_plot.jpg",
+#         con_time_plot,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+
+# Print the plot
+con_time_plot
+```
+
+#### Visualize elimination before serum collection
+
+```{r}
+# Step 1: Select 6 unique groups of Study and Chemical combinations
+selected_groups <- twa_df_multiple %>%
+  distinct(Study, chem, sex, species_name, route, dose_letter) %>%
+  filter(dose_letter == "Dose_B") %>% 
+  slice_sample(n = 5)  # Randomly sample 6 unique groups
+
+# Step 2: Filter the full dataset to include only the selected groups
+# Step 3: Dynamically filter the last 96 hours for each group
+subset_data <- twa_df_multiple %>%
+  filter(paste(Study, chem, species_name, sex, route) %in% 
+           paste(selected_groups$Study, selected_groups$chem, 
+                 selected_groups$species_name, selected_groups$sex,
+                 selected_groups$route)) %>%
+  group_by(Study, chem, species_name, sex, route, Exposure_duration_hr) %>%
+   filter(dose_letter == "Dose_B") %>% 
+  filter(time >= max(time) - 96) %>%
+  ungroup() %>%
+  drop_na(concentration)
+
+# Calculate max(time) + 24 and exposure_duration_hr + 24 for each group
+time_annotations <- subset_data %>%
+  group_by(Study, chem, species_name, sex, route, Exposure_duration_hr) %>%
+  summarize(max_time = max(time),
+            exposure_end = Exposure_duration_hr + 24) %>%   # Exposure end + 24 hours (convert hours to days)
+  distinct()
+
+# Step 4: Create the plot with annotations and vertical lines
+con_time_plot_last96 <- subset_data %>%
+   filter(dose_letter == "Dose_B") %>% 
+  ggplot(aes(x = time, y = concentration, color = factor(sex), group = interaction(Study, chem))) +  
+  geom_point(aes(alpha = time), size = 1) +  # Add points, also adjusting transparency by time
+  geom_line(aes(alpha = time), size = 1) +  # Add points, also adjusting transparency by time
+  scale_alpha(range = c(0.5, 0.8), guide = "none") +  # Set transparency range for time, remove from legend
+  scale_color_discrete(name = "Dose Letter") +  # Rename the color legend to "Dose Letter"
+  labs(title = "Concentration-Time Profile (Last 96 Hours for Each Group)", 
+       x = "Time (hrs)", y = "Concentration (mg/L)") +
+  #scale_y_log10() +
+  #scale_x_log10() +
+  theme_minimal() +  # Use a clean, minimal theme
+  theme(legend.position = "bottom",  # Move legend to bottom
+        strip.text = element_text(size = 10),  # Adjust facet label size
+        strip.text.x = element_text(angle = 0),  # Ensure labels are horizontal
+        legend.title = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5, size = 14)) +  # Center the title
+  facet_wrap(~sex, scales = , labeller = label_wrap_gen(width = 25)) +  # Wrap long facet labels
+  
+  # Add vertical lines at exposure_end (exposure_duration_hr + 24)
+  geom_vline(data = time_annotations, aes(xintercept = exposure_end), 
+             linetype = "dashed", color = "gray", size = 1.2, alpha = 0.8, inherit.aes = FALSE) 
+
+# Save the plot to a file
+# ggsave("figures/con_time_plot_last_96_hours_with_vlines_and_annotations.jpg",
+#        con_time_plot_last96,
+#        width = 12.7, height = 7,
+#        dpi = 300)
+
+# Print the plot
+con_time_plot_last96
+```
+
+## Comparison of Measured and Predicted Serum Levels
+
+```{r message=FALSE, warning=FALSE}
+# Reshape the serum data to long format
+serum_data_long <- twa_df %>%
+  select(-C_avg_ss) %>% 
+   rename(measured_hr_serum = serum_measured_hr) %>% 
+  pivot_longer(cols = starts_with("Serum_"), 
+               names_to = "serum_label", 
+               values_to = "Measured_serum") %>%
+  drop_na(Measured_serum) %>%   # Drop rows with missing serum measurements
+  mutate(dose_letter = str_replace(serum_label, "Serum_", "")) %>%   # Extract the dose letter (A, B, etc.)
+  select(Study, chem, sex, route, strain, species_name, dose_letter, 
+         Measured_serum, measured_hr_serum) %>% 
+    mutate(measured_hr_serum = as.numeric(measured_hr_serum))
+
+# Reshape the standard deviations of the serum measurements to long format
+serum_sd_data_long <- twa_df %>%
+  pivot_longer(cols = starts_with("sd_Serum_"), 
+               names_to = "sd_serum_label", 
+               values_to = "Measured_serum_sd") %>%
+  drop_na(Measured_serum_sd) %>%  # Drop rows with missing standard deviations
+  mutate(dose_letter = str_replace(sd_serum_label, "sd_Serum_", "")) %>%  # Extract the dose letter (A, B, etc.)
+  select(Study, chem, sex, route, strain, species_name, dose_letter, Measured_serum_sd)
+
+# Merge the serum data with the standard deviation data
+serum_data_long <- serum_data_long %>%
+  left_join(serum_sd_data_long, by = c("Study", "chem", "sex", "route", "strain", "species_name", "dose_letter"))
+
+# Reshape twa_df_multiple to ensure dose letters are in the correct format (assuming it already has dose_letter)
+# Ensure that dose_letter is correctly formatted in twa_df_multiple
+twa_df_multiple <- twa_df_multiple %>%
+  mutate(dose_letter = str_replace(dose_letter, "Dose_", ""))  # Extract letter (A, B, etc.) from dose column if needed
+
+# Join the serum data with the calculated concentration series, matching by dose_letter and study
+closest_time_df <- serum_data_long %>%
+  left_join(twa_df_multiple %>% mutate(time = as.numeric(time)),
+            by = c("Study", "chem", "sex", "strain", "species_name", "route", "dose_letter")) %>%
+  group_by(Study, dose_letter, chem, sex, route, strain, species_name) %>%
+  drop_na(measured_hr_serum) %>%
+  drop_na(time) %>%
+  drop_na(concentration) %>% 
+  # Find the closest time point to serum_measured_hr
+   summarize(closest_time = time[which.min(abs(time - measured_hr_serum))]) %>%
+#  filter(time == closest_time) %>%  # Filter to keep only the closest time point
+  ungroup()
+  
+### join closest_time back to original dataset
+serum_comparison <- serum_data_long %>% 
+ left_join(twa_df_multiple %>% mutate(time = as.numeric(time)),
+            by = c("Study", "chem", "sex", "strain", "species_name", "route", "dose_letter")) %>%
+  drop_na(measured_hr_serum) %>%
+  drop_na(time) %>%
+   # Join the calculated closest_time back to the main dataset
+  left_join(closest_time_df,
+            by = c("Study", "dose_letter", "chem", "sex", "strain", "species_name", "route")) %>%
+  filter(time == closest_time) %>% 
+  # just get selected variables
+  select(Study, species_name, chem, sex, strain, route,
+         `Serum/plasma`,
+         dose_letter, measured_hr_serum, Measured_serum, 
+         Dose_mg_kg_d,
+         Measured_serum_sd, closest_time, concentration,
+         PBPK_model_conc,
+         full_model_conc, simple_model_conc, two_phase_conc,
+         model_used,
+         HLe_invivo, CLTot_L_kg_day, VDss_L_kg) %>%
+  mutate(Measured_serum = as.numeric(Measured_serum),
+         Measured_serum_sd = as.numeric(Measured_serum_sd)) %>%
+  drop_na(c(Measured_serum, concentration)) %>%
+  mutate(conc_meas_ratio = concentration / Measured_serum) %>%
+  # left_join(twa_df %>% select(Study, chem, species_name, sex, route, `Serum/plasma`),
+  #           by = c("Study")) %>%
+  mutate(across(where(is.numeric), ~signif(., 4))) %>% 
+  #remove negative controls as they are quite theoretical anyway
+  filter(dose_letter != "zero") %>% 
+  distinct()
+
+
+# Print the comparison table with measured and predicted concentrations
+DT::datatable(serum_comparison)
+```
+
+Check to ensure distinct values for chem/sex/species/route
+
+```{r}
+serum_comparison %>% distinct(chem, sex, species_name, model_used, concentration,
+                              Measured_serum, conc_meas_ratio,
+                              closest_time, measured_hr_serum,
+                              CLTot_L_kg_day, VDss_L_kg, HLe_invivo) %>% 
+  arrange(desc(conc_meas_ratio))
+```
+
+### Comparison of full and simple model predictions with serum levels
+
+```{r}
+model_serum_comparison <- serum_comparison %>% 
+  drop_na(full_model_conc, simple_model_conc, two_phase_conc) %>%  # Ensure both models are available for comparison
+  droplevels() %>% 
+  ggplot(aes(shape = paste0(species_name, " (", sex, ")"))) +
+  
+  # Draw lines linking the full and simplified model points
+  geom_segment(aes(y = full_model_conc, yend = simple_model_conc,
+                   x = Measured_serum, xend = Measured_serum), 
+               color = "gray", linetype = "solid") +
+    
+  # Plot the two-phase model points in green
+  geom_point(aes(y = two_phase_conc,
+                 x = Measured_serum, color = "2-Compartment Model (alpha/beta)"), size = 3) +
+  
+  # Plot the full model points in blue
+  geom_point(aes(y = full_model_conc,
+                 x = Measured_serum, color = "2-Compartment Model"), size = 3) +
+  
+  # Plot the simplified model points in red
+  geom_point(aes(y = simple_model_conc,
+                 x = Measured_serum, color = "1-Compartment Model"), size = 3) +
+  
+  # Add a diagonal reference line
+  geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "red",
+              alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  geom_abline(slope = 1, intercept = -1, linetype = "dashed", color = "red",
+              alpha = 0.3) +
+  
+  # Set log scales for both axes
+  scale_x_log10(limits = c(1e-3, 1000)) +
+  scale_y_log10(limits = c(1e-3, 1000)) +
+  
+  # Define custom colors for the full and simple models
+  scale_color_manual(name = "Model", values = c("2-Compartment Model (alpha/beta)" = "green",
+    "2-Compartment Model" = "blue", "1-Compartment Model" = "red")) +
+  
+  # Define black shapes for species/sex in the legend
+  scale_shape_manual(name = "Species/Sex", values = c(16, 17, 18, 15), guide = guide_legend(override.aes = list(color = "black"))) +
+  
+  # Minimal theme for clean visual
+  theme_minimal(base_size = 16) +
+  
+  # Add a title
+  labs(title = "Comparison of Modelled vs. Measured Serum Concentrations",
+       y = "Predicted Concentration (mg/L)",
+       x = "Measured Serum Concentration (mg/L)") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) +
+  facet_wrap(~chem)
+
+
+# ggsave( "figures/model_serum_comparison.jpg",
+#         model_serum_comparison,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+
+model_serum_comparison
+```
+
+Based on this figure, it's clear that the single-compartment model is
+more accurate for PFOA for both rats and mice. We will use those values
+for subsequent comparisons and output.
+
+#### Comparison of single compartment and PBPK model for PFOS
+
+```{r}
+model_serum_comparison_pfos <- serum_comparison %>% 
+  filter(chem == "PFOS") %>% 
+  droplevels() %>% 
+  ggplot(aes(shape = paste0(species_name, " (", sex, ")"))) +
+  
+  # Draw lines linking the full and simplified model points
+  geom_segment(aes(y = PBPK_model_conc, yend = simple_model_conc,
+                   x = Measured_serum, xend = Measured_serum), 
+               color = "gray", linetype = "solid") +
+  
+  # Plot the full model points in blue
+  geom_point(aes(y = PBPK_model_conc,
+                 x = Measured_serum, color = "PBPK Model"), size = 3) +
+  
+  # Plot the simplified model points in red
+  geom_point(aes(y = simple_model_conc,
+                 x = Measured_serum, color = "1-Compartment Model"), size = 3) +
+  
+  # Add a diagonal reference line
+  geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "black",
+              alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  geom_abline(slope = 1, intercept = -1, linetype = "dashed", color = "black",
+              alpha = 0.3) +
+  
+  # Set log scales for both axes
+  scale_x_log10(limits = c(1e-1, 1000)) +
+  scale_y_log10(limits = c(1e-1, 1000)) +
+  
+  # Define custom colors for the full and simple models
+  scale_color_manual(name = "Model", values = c("PBPK Model" = "darkgreen", "1-Compartment Model" = "orange")) +
+  
+  # Define black shapes for species/sex in the legend
+  scale_shape_manual(name = "Species/Sex", values = c(16, 17, 18, 15), guide = guide_legend(override.aes = list(color = "black"))) +
+  
+  # Minimal theme for clean visual
+  theme_minimal(base_size = 16) +
+  
+  # Add a title
+  labs(title = "Comparison of Modelled vs. Measured Serum Concentrations",
+       subtitle = "PFOS Males",
+       y = "Predicted Concentration (mg/L)",
+       x = "Measured Serum Concentration (mg/L)") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) +
+  facet_wrap(~chem)
+
+
+# ggsave( "figures/model_serum_comparison_pfos.jpg",
+#         model_serum_comparison_pfos,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+
+model_serum_comparison_pfos
+```
+
+e will determine which model is preferable overall for PFBA using a
+statistical test
+
+```{r}
+library(caret)  # For RMSE and MAE
+
+# Group data by chem, species_name, and sex
+model_compare_metrics <- serum_comparison %>%
+  filter(dose_letter != "Zero") %>% 
+  group_by(chem, species_name, sex, route, model_used) %>%
+  summarise(
+    # Model 1 metrics
+    RMSE_simple_model = RMSE(Measured_serum, simple_model_conc, na.rm = TRUE),
+    MAE_simple_model = MAE(Measured_serum, simple_model_conc, na.rm = TRUE),
+    R2_simple_model = if (sum(!is.na(Measured_serum) & !is.na(simple_model_conc)) > 1) {
+      R2(Measured_serum, simple_model_conc, na.rm = TRUE)
+    } else {
+      NA_real_
+    },
+    
+    # Model 2 metrics
+    RMSE_full_model = RMSE(Measured_serum, full_model_conc, na.rm = TRUE),
+    MAE_full_model = MAE(Measured_serum, full_model_conc, na.rm = TRUE),
+    R2_full_model = if (sum(!is.na(Measured_serum) & !is.na(full_model_conc)) > 1) {
+      R2(Measured_serum, full_model_conc, na.rm = TRUE)
+    } else {
+      NA_real_
+    },
+    
+    # Model 3 metrics
+    RMSE_two_phase_model = RMSE(Measured_serum, two_phase_conc, na.rm = TRUE),
+    MAE_two_phase_model = MAE(Measured_serum, two_phase_conc, na.rm = TRUE),
+    R2_two_phase_model = if (sum(!is.na(Measured_serum) & !is.na(two_phase_conc)) > 1) {
+      R2(Measured_serum, two_phase_conc, na.rm = TRUE)
+    } else {
+      NA_real_
+    },
+    
+    # PBPK model metrics
+    RMSE_pbpk_model = RMSE(Measured_serum, PBPK_model_conc, na.rm = TRUE),
+    MAE_pbpk_model = MAE(Measured_serum, PBPK_model_conc, na.rm = TRUE),
+    R2_pbpk_model = if (sum(!is.na(Measured_serum) & !is.na(PBPK_model_conc)) > 1) {
+      R2(Measured_serum, PBPK_model_conc, na.rm = TRUE)
+    } else {
+      NA_real_
+    }
+  ) %>%
+   mutate(
+    better_model = case_when(
+      # If simple model is available and has the lowest RMSE
+      !is.na(RMSE_simple_model) & RMSE_simple_model <= coalesce(RMSE_full_model, Inf) & RMSE_simple_model <= coalesce(RMSE_pbpk_model, Inf) ~ "simple",
+      # If full model is available and has the lowest RMSE
+      !is.na(RMSE_full_model) & RMSE_full_model <= coalesce(RMSE_simple_model, Inf) & RMSE_full_model <= coalesce(RMSE_pbpk_model, Inf) ~ "full",
+      # If two_phase model is available and has the lowest RMSE
+      !is.na(RMSE_two_phase_model) & RMSE_two_phase_model <= coalesce(RMSE_simple_model, Inf) & RMSE_two_phase_model <= coalesce(RMSE_pbpk_model, Inf) ~ "two_phase",
+      # If PBPK model is available and has the lowest RMSE
+      !is.na(RMSE_pbpk_model) & RMSE_pbpk_model <= coalesce(RMSE_simple_model, Inf) & RMSE_pbpk_model <= coalesce(RMSE_full_model, Inf) ~ "PBPK",
+      # If only one model is available, that model wins
+      is.na(RMSE_simple_model) & is.na(RMSE_full_model) & is.na(RMSE_pbpk_model) & !is.na(RMSE_two_phase_model) ~ "two_phase",
+      is.na(RMSE_simple_model) & is.na(RMSE_full_model) & is.na(RMSE_two_phase_model) & !is.na(RMSE_pbpk_model) ~ "PBPK",
+      is.na(RMSE_simple_model) & !is.na(RMSE_full_model) & is.na(RMSE_pbpk_model) & is.na(RMSE_two_phase_model) ~ "full",
+      !is.na(RMSE_simple_model) & is.na(RMSE_full_model) & is.na(RMSE_pbpk_model) & is.na(RMSE_two_phase_model) ~ "simple",
+      TRUE ~ "Not enough data"  # Handles cases with no models available
+    )
+  ) %>% 
+  ungroup() %>% 
+  # unclear why dupes - but need to remove
+  filter(!(chem == "PFOS" & sex == "M" & better_model == "simple")) 
+
+
+model_compare_metrics %>% 
+  arrange(desc(RMSE_simple_model))
+
+```
+
+Just visualize the better model
+
+```{r}
+simple_model_compare <- model_compare_metrics %>% 
+  select(chem, species_name, sex, route, better_model)
+
+simple_model_compare
+```
+
+```{r}
+model_compare_RMSE_plot <- model_compare_metrics %>% 
+  select(chem, species_name, sex, better_model, RMSE_simple_model, RMSE_full_model, 
+         RMSE_two_phase_model,
+         RMSE_pbpk_model) %>% 
+  pivot_longer(cols = starts_with("RMSE"),
+               names_to = "Model",
+               values_to = "RMSE") %>% 
+  mutate(Model = case_when(
+    Model == "RMSE_full_model" ~ "2-Compartment",
+    Model == "RMSE_two_phase_model" ~ "2-Compartment (alpha/beta)",
+    Model == "RMSE_pbpk_model"~ "PBPK",
+    Model == "RMSE_simple_model" ~ "1-Compartment"
+  )) %>% 
+  # Create a combined variable and order it by RMSE
+  mutate(species_sex_chem = paste(species_name, sex, chem, sep = "-")) %>% 
+  arrange(RMSE) %>% 
+  # Convert to factor to arrange by RMSE
+  mutate(species_sex_chem = factor(species_sex_chem, levels = unique(species_sex_chem))) %>% 
+  ggplot(aes(y = species_sex_chem,
+             x = RMSE,
+             fill = Model)) +
+  geom_col(position = "dodge") +
+  scale_fill_discrete_c4a_cat() +
+  labs(y = "Species - Sex - Chemical", x = "RMSE", fill = "Model") +
+  theme_minimal(base_size = 15)
+
+
+# ggsave( "figures/model_compare_RMSE_plot.jpg",
+#         model_compare_RMSE_plot,
+#         width = 9, height = 5,
+#        dpi = 300)
+
+model_compare_RMSE_plot
+```
+
+### Choose preferred models based on comparisons with serum levels (above)
+
+```{r}
+## when multiple models are available, let's just use the better for each species/sex/chem grouping
+serum_comparison <- serum_comparison %>% 
+  # Join with simple_model_compare to bring in the better_model info
+  left_join(simple_model_compare %>% select(-route),
+            by = c("chem", "species_name", "sex")) %>%
+  
+  # Filter to keep only the data for the better model or "simple" model if NA
+  filter(
+    case_when(
+      better_model == "simple" ~ !is.na(simple_model_conc),  # Keep only simple model data
+      better_model == "full" ~ !is.na(full_model_conc),      # Keep only full model data
+      better_model == "two-phase" ~ !is.na(two_phase_conc),      # Keep only full model data
+      better_model == "PBPK" ~ !is.na(PBPK_model_conc), # Keep only PBPK model data
+      is.na(better_model) ~ !is.na(simple_model_conc)        # If no better model, default to simple model
+    )
+  ) %>% 
+  #override concentration withn preferred one
+  mutate(final_concentration = case_when(
+    better_model == "simple" ~ simple_model_conc,  # Keep only simple model data
+      better_model == "full" ~ full_model_conc,      # Keep only full model data
+      better_model == "two-phase" ~ two_phase_conc,      # Keep only two-phase model data
+      better_model == "PBPK" ~ PBPK_model_conc)) %>%  # Keep only PBPK model data))
+  mutate(conc_meas_ratio = final_concentration / Measured_serum)
+```
+
+### Relative Difference Bar Plot
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Compute fold-difference from concentration ratio
+serum_comparison_summary <- serum_comparison %>%
+  distinct(chem, sex, species_name, route, strain,
+           final_concentration, better_model, 
+           Measured_serum, conc_meas_ratio, Study,
+           CLTot_L_kg_day, HLe_invivo) %>% 
+  arrange(desc(conc_meas_ratio)) %>% 
+  group_by(chem, sex, species_name, route, Study, strain) %>% 
+  summarize(
+    ave_conc_meas_ratio = mean(conc_meas_ratio),
+    sd_conc_meas_ratio = sd(conc_meas_ratio)
+  ) %>%
+  
+  # Convert concentration ratio to fold-difference
+  mutate(
+    fold_difference = ifelse(ave_conc_meas_ratio >= 1, ave_conc_meas_ratio, 1 / ave_conc_meas_ratio),
+    fold_difference_sd = ifelse(ave_conc_meas_ratio >= 1, sd_conc_meas_ratio, sd_conc_meas_ratio / ave_conc_meas_ratio)
+  )
+
+serum_comparison_summary %>% 
+  arrange(desc(fold_difference))
+```
+
+```{r}
+library(scales)
+# Add a column to identify trimmed error bars
+serum_comparison_summary_new <- serum_comparison_summary %>%
+  mutate(
+    trimmed_label = case_when(
+      fold_difference > 100 ~ paste0(scales::comma(fold_difference, 1)),
+      TRUE ~ NA_character_  # No label if not trimmed
+    )
+  )
+
+rel_diff_col <- serum_comparison_summary_new %>% 
+  # Create a combined variable for y-axis
+  mutate(chem_species_route = paste(chem, species_name, route, sep = "-")) %>%
+  
+  # Arrange by fold difference within each sex and set as factor for ordered plotting
+  group_by(sex) %>%
+  arrange(sex, fold_difference) %>%
+  ungroup() %>%
+  mutate(chem_species_route = factor(chem_species_route, levels = unique(chem_species_route))) %>%
+  
+  # Plotting the fold-difference
+  ggplot(aes(x = fold_difference,
+             y = chem_species_route,
+             fill = sex)) +
+  
+  # Bar plot showing the fold-difference
+  geom_col(position = "dodge", color = "black") +
+  
+  # Error bars for standard deviation
+  geom_errorbarh(aes(xmin = fold_difference - fold_difference_sd,
+                     xmax = fold_difference + fold_difference_sd),
+                 height = 0.2, position = position_dodge(width = 0.9)) +
+  
+  # Log scale for x-axis (fold difference)
+  scale_x_log10() +
+  # trim to 100
+  coord_cartesian(xlim = c(1, 100)) +
+    # Add labels for trimmed bars
+  geom_text(
+    aes(label = trimmed_label,  x = 90, y = chem_species_route),
+    size = 5,
+    color = "black",
+    na.rm = TRUE,  # Ignore points without labels
+    #hjust = +1.2, size = 3,
+    show.legend = F
+  ) +
+  
+  # Axis labels and title
+  labs(x = "Fold-Difference Between Predicted and Measured Serum Concentrations (log scale)",
+       y = "Chemical, Species, Route",
+       title = "Fold-Differences Between Predicted and Measured Serum Concentrations",
+       fill = "Sex") +
+  
+  # Minimal theme for cleaner look
+  theme_minimal(base_size = 16) +
+  
+  # Faceting by sex for more clarity
+  facet_wrap(~sex, scales = "free_y", ncol = 2)
+
+
+# Save the plot
+# ggsave("figures/fold_diff_col.jpg",
+#        rel_diff_col,
+#        width = 12.7, height = 7,
+#        dpi = 300)
+
+rel_diff_col
+
+```
+
+### Scatterplot
+
+```{r message=FALSE, warning=FALSE}
+library(ggstance)  # For geom_errorbarh
+library(ggpmisc)  # For formula annotation
+
+serum_comparison_scatter_base <- serum_comparison %>%
+  filter(Measured_serum > 0,
+         concentration > 0) %>% 
+  ggplot(aes(x = Measured_serum, 
+             y = final_concentration, 
+              color = chem,
+              shape = sex
+         )) +
+
+  # Scatter points for each study and dose
+  # Scatter points with text for plotly hover
+  geom_point(aes(text = paste("Study:", Study, "<br>",
+                              "Chemical:", chem, "<br>",
+                              "Species:", species_name, "<br>",
+                              "Sex:", sex, "<br>",
+                              "Route:", route, "<br>",
+                              "Serum/plasma:", `Serum/plasma`, "<br>",
+                              "Dose:", Dose_mg_kg_d, "mg/kg-d", "<br>",
+                              "Measured Serum:", Measured_serum, "<br>",
+                              "Predicted Concentration:", final_concentration, "<br>",
+                              "Model Used:", better_model, "<br>",
+                              "Half-Life:", HLe_invivo, "hr", "<br>",
+                              "VD:", VDss_L_kg, "L/kg")), 
+             size = 3, alpha = 0.8) +
+  
+  # 1:1 line for comparison
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  
+  # Error bars for standard deviations (vertical and horizontal)
+  geom_errorbarh(aes(xmin = Measured_serum - Measured_serum_sd, 
+                    xmax = Measured_serum + Measured_serum_sd), 
+                width = 0.1) +
+  scale_colour_discrete_c4a_cat("tol.muted") +
+  
+  # Labels and theme
+  labs(title = "Measured vs. Predicted Serum Concentrations",
+       x = "Measured Serum Concentration (mg/L)",
+       y = "Predicted Serum Concentration (mg/L)") +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "bottom") +
+  
+   scale_x_log10(limits = c(1e-2, 1e3)) +  # Log scale for x-axis
+   scale_y_log10(limits = c(1e-2,1e3))    # Log scale for y-axis
+
+serum_comparison_scatter <- serum_comparison_scatter_base +
+  # Add ribbon around 1:1 line with 3-fold variation
+  geom_ribbon(aes(xmin = final_concentration / 3, xmax = final_concentration * 3),
+              fill = "grey80", color = "darkgrey", alpha = 0.1)
+
+# ggsave( "figures/serum_comparison_scatter.jpg",
+#         serum_comparison_scatter,
+#         width = 9, height = 5,
+#        dpi = 300)
+
+serum_comparison_scatter 
+```
+
+```{r}
+# Convert to Plotly for interactive plot with custom hover info
+serum_comparison_plotly <- ggplotly(serum_comparison_scatter_base, tooltip = "text") %>% 
+  layout(showlegend = T)  # Hide the legend
+
+# saveWidget(serum_comparison_plotly,
+#            "figures/serum_comparison_plotly.html", 
+#            selfcontained = TRUE)
+
+
+# Display the interactive plot
+serum_comparison_plotly
+```
+
+
+It seems that the NTP studies may not have actually measured the PFHXA
+values in rats 24 hr following the last dose, and may have actually
+collected immediately following administration of that last dose. We can
+test this hypothesis by focusing on those last 24 hr of the study.
+
+
+
+### PFHXA Special Case
+
+```{r}
+# Join the serum data with the calculated concentration series, matching by dose_letter and study
+serum_comparison_PFHXA <- serum_data_long %>%
+  left_join(twa_df_multiple %>% mutate(time = as.numeric(time)),
+            by = c("Study", "chem", "sex", "strain", "species_name", "route", "dose_letter")) %>%
+  drop_na(measured_hr_serum) %>%
+  drop_na(time) %>%
+  filter(chem == "PFHXA", route == "Intragastric") %>%
+  
+  group_by(Study, dose_letter, chem, sex, strain, species_name, route) %>%
+  
+  # Find the closest time point to the measured serum concentration for each group
+  mutate(closest_time = sapply(measured_hr_serum, 
+                               function(x) time[which.min(abs(concentration - x))])) %>%
+  
+  ungroup() %>%
+  
+  select(Study, species_name, chem, sex, strain, route, `Serum/plasma`,
+         dose_letter, measured_hr_serum, Measured_serum, 
+         Dose_mg_kg_d, Measured_serum_sd, closest_time, concentration, time,
+         full_model_conc, simple_model_conc, model_used,
+         HLe_invivo, CLTot_L_kg_day, VDss_L_kg) %>%
+  
+  mutate(Measured_serum = as.numeric(Measured_serum),
+         Measured_serum_sd = as.numeric(Measured_serum_sd)) %>%
+  
+  drop_na(c(Measured_serum, concentration)) %>%
+  
+  # Calculate concentration to measured serum ratio
+  mutate(conc_meas_ratio = concentration / Measured_serum) %>%
+  
+  # Format numeric columns
+  mutate(across(where(is.numeric), ~signif(., 4))) %>%
+  
+  # Remove negative controls
+  filter(dose_letter != "zero") %>%
+  distinct()
+
+serum_comparison_PFHXA %>% 
+  arrange(desc(conc_meas_ratio)) %>% 
+   # just look at the final 24 hr of exposure
+  filter(time > 671) %>% 
+  # Find the closest time point to serum_measured_hr
+  mutate(closest_time = time[which.min(abs(concentration - Measured_serum))]) %>%
+  filter(time == closest_time) %>% 
+  select(Study, species_name, chem, sex, dose_letter, conc_meas_ratio, closest_time,
+         concentration, Measured_serum, time,
+         measured_hr_serum)
+```
+
+```{r}
+con_time_plot_last96_specific <- serum_comparison_PFHXA %>%
+  filter(between(time, 645, 740),
+         dose_letter == "D") %>% 
+  ggplot(aes(x = time, y = concentration, color = factor(sex), group = interaction(Study, chem))) +  
+  geom_point(aes(alpha = time), size = 1) +  # Add points, also adjusting transparency by time
+  geom_line(aes(alpha = time), size = 1) +  # Add points, also adjusting transparency by time
+  scale_alpha(range = c(0.5, 0.8), guide = "none") +  # Set transparency range for time, remove from legend
+  scale_color_discrete(name = "Dose Letter") +  # Rename the color legend to "Dose Letter"
+  labs(title = "Concentration-Time Profile (Last 96 Hours for Each Group)", 
+       x = "Time (hrs)", y = "Concentration (mg/L)") +
+  scale_y_log10() +
+  theme_minimal() +  # Use a clean, minimal theme
+  theme(legend.position = "bottom",  # Move legend to bottom
+        strip.text = element_text(size = 10),  # Adjust facet label size
+        strip.text.x = element_text(angle = 0),  # Ensure labels are horizontal
+        legend.title = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5, size = 14)) +  # Center the title
+  facet_wrap(~dose_letter + sex, scales = , labeller = label_wrap_gen(width = 25)) +  # Wrap long facet labels
+  
+  # Add vertical lines at exposure_end (exposure_duration_hr + 24)
+  geom_vline(aes(xintercept = measured_hr_serum), 
+             linetype = "dashed", color = "gray", size = 1.2, alpha = 0.8, inherit.aes = FALSE) +
+  geom_hline(aes(yintercept = Measured_serum), 
+             linetype = "dashed", color = "gray", size = 1.2, alpha = 0.8, inherit.aes = FALSE) 
+
+
+con_time_plot_last96_specific
+```
+
+```{r}
+# Modify the ggplot to include custom hover information
+serum_comparison_scatter_specific <- serum_comparison_PFHXA %>%
+  filter(time == closest_time) %>% 
+ # filter(!chem == "PFOA") %>% 
+  ggplot(aes(y = Measured_serum, x = concentration, 
+             color = paste(chem, route, `Serum/plasma`),
+             text = paste("Study:", Study, "<br>",
+                          "Chemical:", chem, "<br>",
+                          "Species:", species_name, "<br>",
+                          "Sex:", sex, "<br>",
+                          "Route:", route, "<br>",
+                          "Serum/plasma:", `Serum/plasma`, "<br>",
+                          "Dose:", Dose_mg_kg_d, "mg/kg-d", "<br>",
+                          "Measured Serum:", Measured_serum, "<br>",
+                          "Predicted Concentration:", concentration, "<br>",
+                          "Half-Life:", HLe_invivo, "hr", "<br>",
+                          "VD:", VDss_L_kg, "L/kg", "<br>"
+                          ))) +
+  
+  # Scatter points for each study and dose
+  geom_point(aes(shape = sex), size = 3) +
+  
+  # 1:1 line for comparison
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  
+  # Error bars for standard deviations (vertical and horizontal)
+  
+  geom_errorbar(aes(ymin = Measured_serum - Measured_serum_sd, 
+                     ymax = Measured_serum + Measured_serum_sd), 
+                 height = 0.1) +  # Horizontal error bars for measured serum
+  
+  # Linear regression lines for each group
+  stat_smooth(method = "lm", se = FALSE, linetype = "solid") +
+  
+  # Annotate with the regression equation and R^2 for each group
+  stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")),
+               formula = y ~ x, parse = TRUE, label.x.npc = "right", label.y.npc = 0.15, size = 3) +
+  
+  # Labels and theme
+  labs(title = "Measured vs. Predicted Serum Concentrations",
+       y = "Measured Serum Concentration (mg/L)",
+       x = "Predicted Serum Concentration (mg/L)") +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "bottom") +
+
+  # Log scales for x and y axes if needed
+   scale_x_log10()  + #limits = c(1, 2000)) +
+   scale_y_log10() #limits = c(1, 2000))
+
+serum_comparison_scatter_specific
+```
+
+### PFBA Special Case
+
+The PFBA Butenhoff serum levels are far higher than predicted. Let's
+investigate that data more thoroughly here.
+
+```{r}
+# Join the serum data with the calculated concentration series, matching by dose_letter and study
+serum_comparison_PFHXA <- serum_data_long %>%
+  left_join(twa_df_multiple %>% mutate(time = as.numeric(time)),
+            by = c("Study", "chem", "sex", "strain", "species_name", "route", "dose_letter")) %>%
+  group_by(Study, dose_letter) %>%
+  drop_na(measured_hr_serum) %>%
+  drop_na(time) %>%
+  filter(chem == "PFHBA",
+         route == "Intragastric") %>% 
+  # assume serum collected immediately following last dose
+  mutate(measured_hr_serum = measured_hr_serum) %>% 
+  # just look at the final 24 hr of exposure
+  filter(time > 640) %>% 
+  # Find the closest time point to serum_measured_hr
+  mutate(closest_time = time[which.min(abs(concentration - Measured_serum))]) %>%
+  #filter(time == closest_time) %>%  # Filter to keep only the closest time point
+  ungroup() %>%
+  select(Study, species_name, chem, sex, strain, route,
+         `Serum/plasma`,
+         dose_letter, measured_hr_serum, Measured_serum, 
+         Dose_mg_kg_d,
+         Measured_serum_sd, closest_time, concentration, time,
+         full_model_conc, simple_model_conc, two_phase_conc, model_used,
+         HLe_invivo, CLTot_L_kg_day, VDss_L_kg) %>%
+  mutate(Measured_serum = as.numeric(Measured_serum),
+         Measured_serum_sd = as.numeric(Measured_serum_sd)) %>%
+  drop_na(c(Measured_serum, concentration)) %>%
+  mutate(conc_meas_ratio = concentration / Measured_serum) %>%
+  mutate(across(where(is.numeric), ~signif(., 4))) %>% 
+  #remove negative controls as they are quite theoretical anyway
+  filter(dose_letter != "zero") %>% 
+  distinct()
+
+serum_comparison_PFHXA %>% 
+  arrange(desc(conc_meas_ratio)) %>% 
+   # just look at the final 24 hr of exposure
+  filter(time > 671) %>% 
+  # Find the closest time point to serum_measured_hr
+  mutate(closest_time = time[which.min(abs(concentration - Measured_serum))]) %>%
+  filter(time == closest_time) %>% 
+  select(Study, species_name, chem, sex, dose_letter, conc_meas_ratio, concentration, Measured_serum, time,
+         measured_hr_serum)
+```
+
+```{r}
+# Join the serum data with the calculated concentration series, matching by dose_letter and study
+serum_comparison_specific <- serum_data_long %>%
+  left_join(twa_df_multiple %>% mutate(time = as.numeric(time)),
+            by = c("Study", "chem", "sex", "strain", "species_name", "route", "dose_letter")) %>%
+  group_by(Study, dose_letter) %>%
+  drop_na(measured_hr_serum) %>%
+  drop_na(time) %>%
+  filter(chem == "PFHXA",
+         route == "Intragastric") %>% 
+  # assume serum collected immediately following last dose
+  mutate(measured_hr_serum = measured_hr_serum) %>% 
+  # just look at the final 24 hr of exposure
+  filter(time > 640) %>% 
+  # Find the closest time point to serum_measured_hr
+  mutate(closest_time = time[which.min(abs(concentration - Measured_serum))]) %>%
+  #filter(time == closest_time) %>%  # Filter to keep only the closest time point
+  ungroup() %>%
+  select(Study, species_name, chem, sex, strain, route,
+         `Serum/plasma`,
+         dose_letter, measured_hr_serum, Measured_serum, 
+         Dose_mg_kg_d,
+         Measured_serum_sd, closest_time, concentration, time,
+         full_model_conc, simple_model_conc, two_phase_conc, model_used,
+         HLe_invivo, CLTot_L_kg_day, VDss_L_kg) %>%
+  mutate(Measured_serum = as.numeric(Measured_serum),
+         Measured_serum_sd = as.numeric(Measured_serum_sd)) %>%
+  drop_na(c(Measured_serum, concentration)) %>%
+  mutate(conc_meas_ratio = concentration / Measured_serum) %>%
+  mutate(across(where(is.numeric), ~signif(., 4))) %>% 
+  #remove negative controls as they are quite theoretical anyway
+  filter(dose_letter != "zero") %>% 
+  distinct()
+
+serum_comparison_specific %>% 
+  arrange(desc(conc_meas_ratio)) %>% 
+   # just look at the final 24 hr of exposure
+  filter(time > 671) %>% 
+  # Find the closest time point to serum_measured_hr
+  mutate(closest_time = time[which.min(abs(concentration - Measured_serum))]) %>%
+  filter(time == closest_time) %>% 
+  select(Study, species_name, chem, sex, dose_letter, conc_meas_ratio, concentration, Measured_serum, time,
+         measured_hr_serum)
+```
+
+```{r}
+con_time_plot_last96_specific <- serum_comparison_specific %>%
+  filter(time <710,
+         dose_letter == "D") %>% 
+  ggplot(aes(x = time, y = concentration, color = factor(sex), group = interaction(Study, chem))) +  
+  geom_point(aes(alpha = time), size = 1) +  # Add points, also adjusting transparency by time
+  geom_line(aes(alpha = time), size = 1) +  # Add points, also adjusting transparency by time
+  scale_alpha(range = c(0.5, 0.8), guide = "none") +  # Set transparency range for time, remove from legend
+  scale_color_discrete(name = "Dose Letter") +  # Rename the color legend to "Dose Letter"
+  labs(title = "Concentration-Time Profile for PFHXA", 
+       x = "Time (hrs)", y = "Concentration (mg/L)") +
+  scale_y_log10() +
+  theme_minimal() +  # Use a clean, minimal theme
+  theme(legend.position = "bottom",  # Move legend to bottom
+        strip.text = element_text(size = 10),  # Adjust facet label size
+        strip.text.x = element_text(angle = 0),  # Ensure labels are horizontal
+        legend.title = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5, size = 14)) +  # Center the title
+  facet_wrap(~sex, scales = , labeller = label_wrap_gen(width = 25)) +  # Wrap long facet labels
+  
+  # Add vertical lines at exposure_end (exposure_duration_hr + 24)
+  geom_vline(aes(xintercept = measured_hr_serum), 
+             linetype = "dashed", color = "gray", size = 1.2, alpha = 0.8, inherit.aes = FALSE) +
+  geom_hline(aes(yintercept = Measured_serum), 
+             linetype = "dashed", color = "gray", size = 1.2, alpha = 0.8, inherit.aes = FALSE) 
+
+
+
+# ggsave( "figures/con_time_plot_last96_specific.jpg",
+#         con_time_plot_last96_specific,
+#         width = 12.7, height = 7,
+#         dpi = 300)
+
+
+con_time_plot_last96_specific
+```
+
+```{r}
+# Modify the ggplot to include custom hover information
+serum_comparison_scatter_specific <- serum_comparison_specific %>%
+  filter(time == closest_time) %>% 
+ # filter(!chem == "PFOA") %>% 
+  ggplot(aes(y = Measured_serum, x = concentration, 
+             color = paste(chem, route, `Serum/plasma`),
+             text = paste("Study:", Study, "<br>",
+                          "Chemical:", chem, "<br>",
+                          "Species:", species_name, "<br>",
+                          "Sex:", sex, "<br>",
+                          "Route:", route, "<br>",
+                          "Serum/plasma:", `Serum/plasma`, "<br>",
+                          "Dose:", Dose_mg_kg_d, "mg/kg-d", "<br>",
+                          "Measured Serum:", Measured_serum, "<br>",
+                          "Predicted Concentration:", concentration, "<br>",
+                          "Half-Life:", HLe_invivo, "hr", "<br>",
+                          "VD:", VDss_L_kg, "L/kg", "<br>"
+                          ))) +
+  
+  # Scatter points for each study and dose
+  geom_point(aes(shape = sex), size = 3) +
+  
+  # 1:1 line for comparison
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  
+  # Error bars for standard deviations (vertical and horizontal)
+  
+  geom_errorbar(aes(ymin = Measured_serum - Measured_serum_sd, 
+                     ymax = Measured_serum + Measured_serum_sd), 
+                 height = 0.1) +  # Horizontal error bars for measured serum
+  
+  # Linear regression lines for each group
+  stat_smooth(method = "lm", se = FALSE, linetype = "solid") +
+  
+  # Annotate with the regression equation and R^2 for each group
+  stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")),
+               formula = y ~ x, parse = TRUE, label.x.npc = "right", label.y.npc = 0.15, size = 3) +
+  
+  # Labels and theme
+  labs(title = "Measured vs. Predicted Serum Concentrations",
+       y = "Measured Serum Concentration (mg/L)",
+       x = "Predicted Serum Concentration (mg/L)") +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "bottom") +
+  
+  #scale_x_continuous(limits = c(0.01, 1500)) +
+  #scale_y_continuous(limits = c(0.01, 1500))
+  # Log scales for x and y axes if needed
+   scale_x_log10()  + #limits = c(1, 2000)) +
+   scale_y_log10() #limits = c(1, 2000))
+
+serum_comparison_scatter_specific
+```
+
+### Accuracy metrics (linear regression)
+
+```{r}
+library(broom)  # For tidying lm model outputs
+library(purrr)  # For applying functions across grouped data
+
+# Define a function to compute RMSE
+calc_rmse <- function(observed, predicted) {
+  sqrt(mean((observed - predicted) ^ 2))
+}
+
+# Run linear regression for each group and extract RMSE, R^2, and equation
+lm_results <- serum_comparison %>%
+  group_by(chem, Study, route, sex, species_name, `Serum/plasma`) %>%
+  nest() %>%  # Nest the data so we can apply linear regression to each group
+  mutate(
+    model = map(data, ~ lm(Measured_serum ~ concentration, data = .x)),  # Apply linear regression
+    tidy_model = map(model, tidy),  # Tidy the model results for extracting coefficients
+    glance_model = map(model, glance),  # Get R^2 and other summary stats
+    augmented_model = map(model, augment),  # Get predicted values from the model
+    rmse = map_dbl(augmented_model, ~ calc_rmse(.x$.fitted, .x$Measured_serum)),  # Calculate RMSE for each group
+    r_squared = map_dbl(glance_model, "r.squared"),  # Extract R^2
+    intercept = map_dbl(tidy_model, ~ .x %>% filter(term == "(Intercept)") %>% pull(estimate)),  # Get intercept
+    slope = map_dbl(tidy_model, ~ .x %>% filter(term == "concentration") %>% pull(estimate)),  # Get slope
+    equation = paste0("y = ", round(slope, 3), "x + ", round(intercept, 3))  # Create equation as a string
+  ) %>%
+  select(chem, route, `Serum/plasma`, equation, r_squared, rmse)  # Select only relevant columns for display
+
+# Display the results
+lm_results %>% 
+  arrange(desc(r_squared)) %>% 
+  select(chem, species_name, sex, route, `Serum/plasma`, r_squared, rmse, equation, Study) %>% 
+  mutate(across(where(is.numeric), ~signif(.,4)))
+```
+
+### Bar plot comparison of modeled/measured residuals
+
+```{r}
+library(ggplot2)
+
+# Calculate normalized residuals: (Measured_serum - concentration) / Measured_serum * 100
+serum_comparison <- serum_comparison %>%
+  mutate(normalized_residual = ((Measured_serum - concentration) / Measured_serum) * 100)
+
+# Create a boxplot to visualize the distribution of normalized residuals
+serum_residual_plot <- serum_comparison %>%
+  ggplot(aes(x = chem, y = normalized_residual, 
+             color = paste(chem, sex, route, `Serum/plasma`),
+             text = paste("Study:", Study, "<br>",
+                          "Chemical:", chem, "<br>",
+                          "Sex:", sex, "<br>",
+                          "Route:", route, "<br>",
+                          "Serum/plasma:", `Serum/plasma`, "<br>",
+                          "Dose Letter:", dose_letter, "<br>",
+                          "Measured Serum:", Measured_serum, "<br>",
+                          "Predicted Concentration:", concentration, "<br>",
+                          "Normalized Residual (%):", normalized_residual))) +
+  geom_boxplot(outlier.shape = NA) +  # Boxplot of normalized residuals for each chemical
+  geom_jitter(aes(shape = dose_letter), size = 3, width = 0.2) +  # Jittered points to show individual normalized residuals
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at zero to indicate perfect fit
+  labs(title = "Normalized Residuals: Measured vs. Predicted Serum Concentrations",
+       x = "Chemical",
+       y = "Normalized Residual (%)") +
+#  scale_y_log10() +
+  ylim(c(-100, 100)) +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "bottom")
+
+# Save the plot
+# ggsave( "figures/serum_normalized_residual_plot.jpg",
+#         serum_residual_plot,
+#         width = 12.7, height = 7,
+#         dpi = 300)
+
+# Show the plot
+serum_residual_plot
+
+```
+
+#### Multiple Linear Regression on Residuals
+
+```{r}
+# calculate mean residual for each estimation
+serum_summarize <- serum_comparison %>% 
+  group_by(chem, Study, route, sex, species_name, `Serum/plasma`, model_used, dose_letter, HLe_invivo) %>%
+  summarize(mean_residual = mean(normalized_residual,
+                                 na.rm = T))
+
+serum_annotated <- left_join(serum_summarize, mismatch_data,
+                             by = c("chem", "species_name", "sex", "route"),
+                             relationship = "many-to-many")
+
+#tabulate total mismatches for TK data
+total_mis <- serum_annotated %>% 
+  filter(chem_species_mismatch == 0) %>% 
+  group_by(chem, Study, route, sex, species_name) %>% 
+  summarize(total_mismatches = sum(total_mismatches),
+            strain_mismatches = sum(strain_mismatch),
+            route_mismatches = sum(route_mismatch)) %>% 
+  arrange(desc(total_mismatches))
+
+serum_summarize <- left_join(serum_summarize, total_mis,
+                             by = c("chem", "species_name", "sex", "route", "Study"),
+                             relationship = "many-to-many")
+
+### run linear regression of each study with serum data to determine relevant variables influencing model accuracy
+# Correct the pipe usage and specify the data argument
+serum_summarize_lm <- lm(mean_residual ~ chem + route + sex + HLe_invivo,# +
+                           #strain_mismatches + 
+                           #route_mismatches,# + total_mismatches, 
+                         data = serum_summarize)
+
+# View the summary of the regression model
+summary(serum_summarize_lm)
+```
+
+```{r}
+serum_residuals_sex <- serum_summarize %>% 
+  ggplot(aes(x = mean_residual,
+             y = sex,
+             color = chem#,
+           #  shape = sex
+             )) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  theme_minimal(base_size = 16) +
+  scale_x_log10()# +
+  #scale_y_log10()
+
+# ggsave( "figures/serum_residuals_sex.jpg",
+#         serum_residuals_sex,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+
+serum_residuals_sex  
+```
+
+## Select Best Model in Master Dataset
+
+Model performance on validation datasets are used to determine which
+model to use across all cases for a given species/sex/chemical (route
+independent). Some chemical/species/sex combinations lack validation
+data, so we will assign them the more complicated model (if available)
+as a default option - with the simple 1-compartment model as fall-back.
+
+```{r}
+twa_df_multiple <- twa_df_multiple %>%
+  ### Select better model to calculate metrics ###
+  left_join(serum_comparison %>% distinct(species_name, sex, chem, better_model),
+            by = c("species_name", "sex", "chem")) %>% 
+  mutate(model_validation = case_when(
+    is.na(better_model) ~ "unvalidated",
+    !is.na(better_model) ~ "validated"
+  )) %>% 
+  # some combinations don't have validation data, so we'll have to chooose the better model arbitrarily.
+  mutate(better_model = case_when(
+    is.na(better_model) & model_availability == "three" ~ "PBPK",
+    is.na(better_model) & model_availability == "both" ~ "full",
+    is.na(better_model) & model_availability == "two_phase" ~ "two_phase",
+   # is.na(better_model) & model_availability == "simple_only" ~ "simple",
+    T ~ better_model
+  ))
+
+# display
+twa_df_multiple %>% 
+   distinct(species_name, sex, chem, model_availability, model_validation, better_model)
+```
+
+## AUC, CMax, TWA
+
+The **Area Under the Curve (AUC)** can be calculated using the
+trapezoidal rule, which approximates the area under a curve by dividing
+it into a series of trapezoids.
+
+The equation for AUC is:
+
+$$
+AUC = \sum_{i=1}^{n-1} \left( \frac{C_i + C_{i+1}}{2} \right) \times (t_{i+1} - t_i)
+$$
+
+Where: - $C_i$ and $C_{i+1}$ are the concentrations at time points $t_i$
+and $t_{i+1}$, respectively. - $t_i$ and $t_{i+1}$ are consecutive time
+points. - The area between each pair of points is calculated as the
+average of the concentrations, multiplied by the time interval between
+them.
+
+```{r}
+# Function to calculate AUC using the trapezoidal rule
+calculate_auc <- function(time, concentration) {
+  auc <- sum(diff(time) * (head(concentration, -1) + tail(concentration, -1)) / 2)
+  return(auc)
+}
+```
+
+```{r}
+# Calculate PK parameters (AUC, Cmax, TWA) for both full and simple model data
+pk_params <- twa_df_multiple %>% 
+  # make sure only using the best model (joined previously to df based on performance metrics)
+    mutate(final_concentration = case_when(
+    better_model == "simple" ~ simple_model_conc,  # Keep only simple model data
+      better_model == "full" ~ full_model_conc,      # Keep only full model data
+    better_model == "two-phase" ~ two_phase_conc#,      # Keep only full model data
+      #better_model == "PBPK" ~ PBPK_model_conc
+    )
+    ) %>%  # Keep only PBPK model data))
+  mutate(final_concentration = case_when(
+    #is.na(final_concentration) ~ simple_model_conc, #handle cases where full model fails
+    T ~ final_concentration
+  )) %>% 
+  group_by(Study, chem, sex, species_name, strain, route, model_used,
+           Exposure_duration_hr, Dose_mg_kg_d, dose_letter) %>%
+  summarise(
+    Cmax = max(final_concentration, na.rm = TRUE),  # Maximum concentration
+    AUC = calculate_auc(time, final_concentration),  # AUC using trapezoidal rule. Measured in mg*hr / L
+    TWA = AUC / max(time)  # Time-weighted average concentration (mg/L)
+  ) %>%
+  ungroup() %>%
+  # Round numeric values to 4 significant digits
+  mutate(across(where(is.numeric), ~signif(., 4))) %>%
+  distinct()  %>% 
+  #join PFOS PBPK model output for comparison
+  bind_rows(PFOS_PBPK %>%
+              select(-serum_measured_hr) %>% 
+              mutate(dose_letter = case_when(dose_letter == "Dose_A" ~ "A",
+                                           dose_letter == "Dose_B" ~ "B",
+                                           dose_letter == "Dose_C" ~ "C",
+                                           dose_letter == "Dose_D" ~ "D",
+                                           dose_letter == "Dose_E" ~ "E")))
+  
+
+# Merging pk_params with annotation information (species, sex, route, etc.)
+  # annotate with additoanl info
+pk_params_annotated <- left_join(pk_params %>% 
+                                   mutate(dose_letter  = paste0("Dose_", dose_letter)) %>% 
+                                   select(-c(Dose_mg_kg_d, Exposure_duration_hr)),
+                                 twa_df, #%>% #dataset that contains steady-state calculations
+                                   #rename(Cmax_ss = Cmax),# %>% 
+                                 #  drop_na(Cmax_ss) %>%  
+                                    # distinct(Study, chem, sex, species_name, route, dose_letter,
+                                    #          Dose_mg_kg_d,
+                                    #          Exposure_duration_hr, strain,
+                                    #          .keep_all = T),
+                                 by = c("Study", "chem", "sex", "species_name", "route",
+                                        #"Exposure_duration_hr",  
+                                        "dose_letter", "strain"#,
+                                        #"Dose_mg_kg_d"
+                                        )
+                                 ) %>% 
+  mutate(Cmax = case_when(Cmax == -Inf ~ NA,
+                          T ~ Cmax)) %>% 
+  relocate(Cmax_ss, .before = Cmax)  %>% 
+  # remove non-PBPK data for PFOS Male Rat
+  mutate(remove = case_when(
+    chem == "PFOS" & species_name == "Rat" & sex == "M" & model_used == "simple" ~ "remove")) %>% 
+  filter(is.na(remove))
+
+
+
+#exprt data
+# Write the dataset to a CSV file
+#write.csv(pk_params, "data_output/pk_params_dose_to_serum.csv")
+
+# table
+pk_params_annotated %>%
+ mutate(across(where(is.numeric), ~ format(., scientific = TRUE))) %>% 
+  arrange(desc(chem))
+```
+
+QA/QC
+
+```{r}
+pk_params_annotated %>% 
+  distinct(species_name, sex, chem, AUC, model_used) %>% 
+  arrange(desc(AUC))
+```
+
+```{r eval=FALSE, include=FALSE}
+test_pk <- pk_params_annotated %>% 
+  filter(is.na(Cmax_ss) & !is.na(Cmax)) %>% 
+  distinct(Study, chem, sex, species_name, route,
+           #Exposure_duration_hr,
+           dose_letter,
+           AUC) %>% 
+  drop_na(AUC)
+
+test_pk
+```
+
+```{r eval=FALSE, include=FALSE}
+test <- twa_df %>% 
+  filter(chem == "PFHXA",
+         species_name == "Rat",
+         Exposure_duration_hr == 17976) %>% 
+  distinct(Study, chem, sex, species_name, route, #Exposure_duration_hr,
+           dose_letter,
+           #Cmax, 
+           C_avg_ss)
+
+full_join(test, test_pk)
+```
+
+```{r eval=FALSE, include=FALSE}
+pk_params_annotated %>% 
+  filter(Study == "Klaunig et al 2015 Female Sprague Dawley rat") %>% 
+  distinct(Study, chem, sex, species_name, route,# Exposure_duration_hr,
+           dose_letter)
+```
+
+```{r}
+# Filter to keep only the highest dose for each study
+pk_params_filtered <- pk_params_annotated %>%
+  drop_na(AUC) %>% 
+  group_by(Study, chem) %>%
+  filter(Dose_mg_kg_d == max(Dose_mg_kg_d)) %>%  # Assuming Dose_mg_kg_d is the dose column
+  ungroup()
+
+# Define a function to create the annotation text
+add_annotation_text <- function(df) {
+  df %>%
+    mutate(annotation = paste(species_name, sex, route, sep = ", "))
+}
+
+# Add annotation text for sex, species_name, and route
+pk_params_filtered <- add_annotation_text(pk_params_filtered)
+
+# Create a common theme for all plots
+common_theme <- theme(
+  plot.title = element_text(hjust = 0.5),
+  legend.position = "bottom"
+)
+
+# Create a bar plot for Cmax
+p1 <- ggplot(pk_params_filtered, aes(x = chem, y = Cmax, fill = Study)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = annotation), position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +  # Add annotation text above bars
+  scale_y_log10() +
+  labs(title = "Cmax (Maximum Concentration)", y = "Cmax (mg/L)", x = "Chemical") +
+  common_theme
+
+# Create a bar plot for AUC
+p2 <- ggplot(pk_params_filtered, aes(x = chem, y = AUC, fill = Study)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = annotation), position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +  # Add annotation text above bars
+  scale_y_log10() +
+  labs(title = "AUC (Area Under the Curve)", y = "AUC (mg*hr/L)", x = "Chemical") +
+  common_theme
+
+# Create a bar plot for TWA
+p3 <- ggplot(pk_params_filtered, aes(x = chem, y = TWA, fill = Study)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = annotation), position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +  # Add annotation text above bars
+  scale_y_log10() +
+  labs(title = "TWA (Time-Weighted Average)", y = "TWA (mg/L)", x = "Chemical") +
+  common_theme
+
+# Combine the plots using patchwork and ensure the legend is at the bottom
+# combined_plot <- (p1 / p2 / p3) + 
+#   plot_layout(guides = "collect") & 
+#   theme(legend.position = "bottom", legend.justification = "center", legend.box = "horizontal")
+
+# ggsave( "../../output/combined_plot.jpg",
+#         combined_plot,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+# 
+# # Print the combined plot
+# combined_plot
+```
+
+## Compare TWA vs. Cavg (full model vs. steady-state approaches)
+
+```{r}
+TWAvsCavg <- pk_params_filtered %>% 
+  ggplot(aes(x = Cmax_ss,
+             y = Cmax,
+             color = chem,
+             shape = species_name)) +
+  geom_point(size = 2,
+             alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +  # 1:1 line for comparison
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x = "Max Concentration (Steady-State Approach)",
+       y = "Max Concentration (Time-Series Model Approach)") +
+  theme_minimal(base_size = 15)
+
+# ggsave( "figures/TWAvsCavg.jpg",
+#         TWAvsCavg,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+
+TWAvsCavg
+```
+
+```{r}
+pk_params_filtered_annotate <- pk_params_filtered %>%
+  mutate(species_sex = paste0(species_name, " (", sex, ")")) %>% 
+  mutate(percent_difference = ((C_avg_ss - TWA) / C_avg_ss) * 100) %>% 
+  distinct(percent_difference, .keep_all = T) %>% 
+  drop_na(percent_difference)
+
+difference_plot_one_compartment <- pk_params_filtered_annotate  %>% 
+  ggplot(aes(x =CLTot_L_kg_day * VDss_L_kg, y = percent_difference, color = chem, shape = species_sex,
+             text = paste0("chemical: ", chem,
+                           "<br>Species: ", species_name,
+                           "<br>Dose: ", Dose_mg_kg_d, " (mg/kg-d)",
+                           "<br>Estimated Css: ", signif(C_avg_ss, 3), " mg/L",
+                           "<br>Estimated Cavg (TWA): ", signif(TWA, 3), " mg/L",
+                           "<br>Percent Difference:", signif(percent_difference, 3), " %",
+                           "<br>Total Clearance: ", signif(CLTot_L_kg_day, 3), " (L/kg-d)",
+                           "<br>Half-life: ", HLe_invivo, " hr",
+                           "<br>VDss: ", signif(VDss_L_kg,3), "L/kg",
+                           "<br>Study: ", Study,
+                           "<br>Sex: ", sex,
+                           "<br>Strain: ", strain,
+                           "<br>Route: ", route,
+                           "<br>Clearance mismatches: ", mismatches_CL,
+                           "<br>Half-Life mismatches: ", mismatches_HLe,
+                           "<br>Volume of Distribution mismatches: ", mismatches_VDss,
+                           "<br>Clearance tissue: ", tissue_CL,
+                           "<br>Half Life tissue: ", tissue_HLe,
+                           "<br>VD tissue: ", tissue_VDss
+                           ))) +
+  geom_point(size = 4, alpha = 0.8) +
+  #cols4all::scale_color_discrete_c4a_cat(palette = "wes.bottle_rocket2", name = "Chemical") +
+  scale_shape_discrete(name = "Organism (sex)") +
+  scale_x_log10("Clearance Rate (L/kg-d)", labels = scales::comma_format()) +
+ scale_y_continuous("Percent Difference (%)", labels = scales::percent_format(scale = 1)) +
+  labs(
+    title = "Percent Difference Between TWA_SS and TWA_Model Concentrations",
+    x = "Administerd Daily Dose (mg/kg-day)",
+    y = "Percent Difference (%)"
+  ) +
+  theme_minimal()
+
+
+# ggsave( "figures/difference_plot_oneCompartment.jpg",
+#         difference_plot_one_compartment,
+#         width = 11, height = 5,
+#        dpi = 300)
+
+difference_plot_one_compartment
+```
+
+```{r}
+summary(lm(percent_difference ~ CLTot_L_kg_day + HLe_invivo + VDss_L_kg,
+   data = pk_params_filtered_annotate %>% filter(C_avg_ss > 0),
+   na.action = "na.omit"))
+
+summary(lm(percent_difference ~ CLTot_L_kg_day * VDss_L_kg,
+   data = pk_params_filtered_annotate %>% filter(C_avg_ss > 0),
+   na.action = "na.omit"))
+```
+
+### Compare CMax (full model with absorption) vs. CMax (simple model)
+
+#### Calculate params for each model
+
+```{r}
+pk_params_model_compare <- twa_df_multiple %>%
+#filter(model_availability %in% c("both", "three")) %>%
+  group_by(Study, chem, sex, species_name, strain, route, model_used,
+           Exposure_duration_hr, Dose_mg_kg_d, dose_letter) %>%
+  summarise(
+    #two-phase
+     Cmax_two_phase = max(two_phase_conc, na.rm = TRUE),  # Maximum concentration
+    AUC_two_phase = calculate_auc(time / 24, two_phase_conc),  # AUC using trapezoidal rule, converting time to days
+    TWA_two_phase = AUC_two_phase / max(time / 24),  # Time-weighted average concentration (AUC / total duration in days)
+    #full model
+    Cmax_full = max(full_model_conc, na.rm = TRUE),  # Maximum concentration
+    AUC_full = calculate_auc(time / 24, full_model_conc),  # AUC using trapezoidal rule, converting time to days
+    TWA_full = AUC_full / max(time / 24),  # Time-weighted average concentration (AUC / total duration in days)
+    ##simple model
+    Cmax_simple = max(simple_model_conc, na.rm = TRUE),  # Maximum concentration
+    AUC_simple = calculate_auc(time / 24, simple_model_conc),  # AUC using trapezoidal rule, converting time to days
+    TWA_simple = AUC_simple / max(time / 24)  # Time-weighted average concentration (AUC / total duration in days)
+  ) %>%
+  ungroup() %>%
+  # Round numeric values to 4 significant digits
+  mutate(across(where(is.numeric), ~signif(., 4))) %>%
+  distinct()  
+  # Merging pk_params with annotation information (species, sex, route, etc.)
+
+pk_params_model_compare 
+```
+
+#### Visualize
+
+```{r}
+cmax_compare <- pk_params_model_compare %>% 
+  filter(dose_letter != "Dose_zero") %>% 
+  droplevels() %>% 
+  ggplot(aes(x = Cmax_full, 
+             y = Cmax_simple,
+             color = paste0(species_name, " (", sex, ")"))) +
+  
+  geom_point() +
+  
+  # Add a diagonal reference line
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey") +
+  
+  # Set log scales for both axes
+  scale_x_log10() +
+  scale_y_log10() +
+  
+    # Define black shapes for species/sex in the legend
+  scale_color_discrete(name = "Species/Sex") +
+  
+  # Minimal theme for clean visual
+  theme_minimal(base_size = 16) +
+  
+  # Add a title
+  labs(title = "CMax",
+     #  subtitle = "(PFBA)",
+       x = "Full Model CMax (mg/L)",
+       y = "Simple Model CMax (mg/L)") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+
+### AUC
+AUC_compare <- pk_params_model_compare %>% 
+  filter(dose_letter != "Dose_zero") %>% 
+  droplevels() %>% 
+  ggplot(aes(x = AUC_full, 
+             y = AUC_simple,
+             color = paste0(species_name, " (", sex, ")"))) +
+  
+  geom_point() +
+  
+  # Add a diagonal reference line
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey") +
+  
+  # Set log scales for both axes
+  scale_x_log10() +
+  scale_y_log10() +
+  
+    # Define black shapes for species/sex in the legend
+  scale_color_discrete(name = "Species/Sex") +
+  
+  # Minimal theme for clean visual
+  theme_minimal(base_size = 16) +
+  
+  # Add a title
+  labs(title = "AUC",
+       #subtitle = "(PFBA)",
+       x = "Full Model AUC (mg/L)",
+       y = "Simple Model AUC (mg/L)") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+
+### TWA
+TWA_compare <- pk_params_model_compare %>% 
+  droplevels() %>% 
+  ggplot(aes(x = TWA_full, 
+             y = TWA_simple,
+             color = paste0(species_name, " (", sex, ")"))) +
+  
+  geom_point() +
+  
+  # Add a diagonal reference line
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey") +
+  
+  # Set log scales for both axes
+  scale_x_log10() +
+  scale_y_log10() +
+  
+    # Define black shapes for species/sex in the legend
+  scale_color_discrete(name = "Species/Sex") +
+  
+  # Minimal theme for clean visual
+  theme_minimal(base_size = 16) +
+  
+  # Add a title
+  labs(title = "TWA",
+       #subtitle = "(PFBA)",
+       x = "Full Model TWA (mg/L)",
+       y = "Simple Model TWA (mg/L)") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+TWA_compare
+
+
+full_simple_model_compare_plot <- ggpubr::ggarrange(cmax_compare, AUC_compare, TWA_compare,
+                                                    common.legend = T)
+
+
+# ggsave( "figures/full_simple_model_compare_plot.jpg",
+#         full_simple_model_compare_plot,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+
+full_simple_model_compare_plot
+```
+
+## Theoretical Scenario using grid values
+
+A full PBPK model was developed by Wambaugh for PFOS, and was optimized
+using Bayesian Markov-Chain Monte Carlo and auxiliary data by [Chou &
+Lin (2019); Environment
+International](https://www.sciencedirect.com/science/article/pii/S016041201930203X).
+The model was only optimized for males for all species. Several PFOS
+studies were used in our assessment, so we can compare our simple
+modeling approach for PFOS based on a theoretical exposure scenario and
+real TK data.
+
+```{r}
+# Define the simple model (e.g., one-compartment with elimination)
+simple_model <- function(D, Vd, ke, tau, n, t) {
+  if (t <= n * tau) {  # Dosing phase
+    C <- (D / Vd) * ((1 - exp(-n * ke * tau)) / (1 - exp(-ke * tau))) * exp(-ke * t)
+  } else {  # Elimination phase after final dose
+    time_since_last_dose <- t - (n * tau)
+    C <- (D / Vd) * exp(-ke * time_since_last_dose)
+  }
+  return(C)
+}
+
+scenarios <- expand.grid(
+  species = c("Rat", "Mouse"),
+  sex = "M",
+  dose_mg_kg = c(0.1, 1, 10),     # Different dose levels
+  duration_days = c(7, 28, 90),   # Different durations (7, 28, 90 days)
+  tau_hr = 24                     # Dosing every 24 hours
+)
+
+# extract TK data
+ke <- tk_pfas_df %>% 
+  filter(chem == "PFOS",
+         sex == "M",
+         route == "Oral",
+         standard_endpoint == "HLe_invivo") %>% 
+  group_by(species_name) %>% 
+  mutate(ke = log(2) / standard_value) %>% 
+  summarize(ke = mean(ke),
+            sd_ke = sd(ke))
+
+VD <- tk_pfas_df %>% 
+  filter(chem == "PFOS",
+         sex == "M",
+         route == "Oral",
+         standard_endpoint == "VDapp"
+         ) %>% 
+  group_by(species_name,
+           standard_endpoint,
+           standard_unit) %>% 
+  summarize(VD = mean(standard_value),
+            sd_VD = sd(standard_value))
+
+
+# Define simple model parameters for mice and rats
+simple_params <- list(
+  Rat = list(Vd = VD %>% filter(species_name == "Rat") %>% pull(VD),
+             ke = ke %>% filter(species_name == "Rat") %>% pull(ke)), 
+  Mouse = list(Vd = VD %>% filter(species_name == "Mouse") %>% pull(VD),
+             ke = ke %>% filter(species_name == "Mouse") %>% pull(ke))
+)
+
+# Now run the simple model for comparison
+run_simple_model <- function(dose_mg_kg, duration_days, tau_hr, Vd, ke) {
+  n_doses <- floor(duration_days * 24 / tau_hr)  # Number of doses
+  time_points <- seq(0, duration_days * 24, by = 1)
+  
+  # Apply simple model to each time point
+  conc <- sapply(time_points, function(t) simple_model(dose_mg_kg, Vd, ke, tau_hr, n_doses, t))
+  data.frame(time = time_points, concentration = conc)
+}
+
+# Function to apply simple model for a scenario
+run_simple <- function(species, dose_mg_kg, duration_days, tau_hr) {
+  params <- simple_params[[species]]
+  run_simple_model(dose_mg_kg, duration_days, tau_hr, params$Vd, params$ke)
+}
+
+# Apply simple model to all scenarios
+simple_results <- scenarios %>%
+  group_by(species, dose_mg_kg, duration_days, tau_hr) %>%
+  mutate(simple_output = map2(species, dose_mg_kg, ~run_simple(.x, .y, duration_days, tau_hr))) %>% 
+    unnest()
+
+# calculate AUC, CMAX, TWA
+simple_summary <- simple_results %>% 
+  group_by(species, duration_days, dose_mg_kg) %>%
+  summarise(
+    Cmax = max(concentration, na.rm = TRUE),  # Maximum concentration
+    AUC = calculate_auc(time / 24, concentration),  # AUC using trapezoidal rule, converting time to days
+    TWA = AUC / max(time / 24)  # Time-weighted average concentration (AUC / total duration in days)
+    
+  )
+
+
+simple_summary
+```
+
+## PFOS Rat PBPK Model Output from RShiny App
+
+```{r}
+#write.csv(scenarios, "scenarios.csv")
+## manually input data from RShiny app
+#getwd()
+pbpk <- read.csv(here("data_input/pfos_pbpk_output_scenarios.csv"))
+
+# match pbpk results to single compartment model
+comparison <- left_join(simple_summary,
+          pbpk,
+          by = c("species", "duration_days", "dose_mg_kg"),
+          suffix = c("", ".pbpk")) %>% 
+  drop_na()
+
+comparison
+```
+
+### Visualize comparison of PBPK Results and Single Compartment Results
+
+```{r}
+
+## AUC
+auc_comp <- comparison %>% 
+  mutate(`Exposure Duration` = as.factor(duration_days)) %>% 
+  ggplot(aes(x = AUC, y= AUC.pbpk,
+             color = species,
+             shape = `Exposure Duration`)) +
+  geom_point(size = 3,
+             alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +  # 1:1 line for comparison
+  # scale_x_continuous(limits = c(0, 1000)) +
+  # scale_y_continuous(limits = c(0, 1000)) +
+  scale_x_log10(limits = c(1, 800)) +
+  scale_y_log10(limits = c(1, 800)) +
+  
+  labs(x = "Predicted AUC (Single-Compartment Model)",
+       x = "Predicted AUC (Full PBPK Model)") +
+  theme_minimal(base_size = 15)
+
+## TWA
+twa_comp <- comparison %>% 
+  mutate(`Exposure Duration` = as.factor(duration_days)) %>% 
+  ggplot(aes(x = TWA, y= TWA.pbpk,
+             color = species,
+             shape = `Exposure Duration`)) +
+  geom_point(size = 3,
+             alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +  # 1:1 line for comparison
+  # scale_x_continuous(limits = c(0, 1000)) +
+  # scale_y_continuous(limits = c(0, 1000)) +
+  scale_x_log10(limits = c(0.1, 10)) +
+  scale_y_log10(limits = c(0.1, 10)) +
+  
+  labs(x = "Predicted TWA (Single-Compartment Model)",
+       x = "Predicted TWA (Full PBPK Model)") +
+  theme_minimal(base_size = 15)
+
+## CMAX
+cmax_comp <- comparison %>% 
+  mutate(`Exposure Duration` = as.factor(duration_days)) %>% 
+  ggplot(aes(x = Cmax, y= Cmax.pbpk,
+             color = species,
+             shape = `Exposure Duration`)) +
+  geom_point(size = 3,
+             alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +  # 1:1 line for comparison
+  # scale_x_continuous(limits = c(0, 1000)) +
+  # scale_y_continuous(limits = c(0, 1000)) +
+  scale_x_log10(limits = c(0.5, 20)) +
+  scale_y_log10(limits = c(0.5, 20)) +
+  
+  labs(x = "Predicted CMax (Single-Compartment Model)",
+       x = "Predicted CMax (Full PBPK Model)") +
+  theme_minimal(base_size = 15)
+
+pbpk_single_comparisons <- ggpubr::ggarrange(auc_comp, twa_comp, cmax_comp)
+
+
+# ggsave( "figures/pbpk_single_comparisons.jpg",
+#         pbpk_single_comparisons,
+#         width = 12.7, height = 7,
+#        dpi = 300)
+
+pbpk_single_comparisons  
+```
+
+#Clean Up summary datasets \## AUC, TWA, CMax
+
+```{r}
+modeled_summary_data <- pk_params_annotated %>% 
+  select(Study, chem, sex, species_name, strain, route,
+         model_used,
+         Exposure_duration_hr, 
+         Dose_mg_kg_d, 
+         Dose_mg_kg_d_OG,
+         Cmax, AUC, TWA,
+         AUC_ss, C_avg_ss) %>% 
+  rename(Cmax_mg_L = Cmax,
+         AUC_mg_L = AUC,
+         TWA_mg_L = TWA,
+         AUC_ss_mg_L = AUC_ss,
+         TWA_css_mg_L = C_avg_ss) %>% 
+  arrange(desc(Study))
+
+modeled_summary_data
+```
+
+```{r}
+modeled_summary_data %>% 
+  filter(Dose_mg_kg_d >0.01) %>% 
+  ggplot(aes(x = AUC_mg_L, y = AUC_ss_mg_L,
+             color = chem,
+             shape = sex)) +
+  geom_point(shaep = 3, alpha = 0.8) +
+  geom_abline(slope = 1) +
+  scale_x_log10(name = "Area Under the Curve (Full Model)") +
+  scale_y_log10(name = "Area Under the Curve (Steady-State)") +
+  theme_minimal(base_size = 16) 
+```
+
+## TK Matching Data
+
+```{r}
+tk_match_summary <- final_matched_df %>% 
+  select(Study, chem, sex, species_name, route, strain,
+         contains("CL"), contains("VDss"), contains("HLe"), contains("kabs"),
+         contains("k_alpha"), contains("k_beta"), contains("VD2"), contains("VDc")
+        #t_steady_state_hr
+        ) %>% 
+  distinct() %>% 
+  select(-contains("total")) %>% 
+  arrange(desc(HLe_invivo))
+
+tk_match_summary
+```
+
+# Export all data to excel
+
+## Prep Data for BMDS Software
+
+### Thyroid dataset from 11-1-2024
+
+```{r}
+#example dataset 
+example <- readxl::read_excel(here("data_input/Thyroid datasets complete with optimized dose to serum conversions 11.1.2024_CORRECTED.xlsx")) 
+
+example <- example %>% 
+  mutate(NumericIndex = as.numeric(gsub("ID", "", `Dataset Index`))) %>% # Extract numeric part
+  arrange(NumericIndex, Dose) %>% # Sort by numeric index and then Dose
+  select(-NumericIndex) %>%  # Remove the temporary column
+  mutate(uniqueID = row_number(),
+         Dose = signif(Dose, 3))
+
+#write.csv(example, "data_output/example.csv")
+
+chem_aux <- example %>% distinct(`Carbon number`, Compound, `Compound form`, Type, MW)
+
+experiment_conditions <- example %>% distinct(Compound, Species, 
+                                              Sex, `Endpoint type`, `Dose metric`,
+                                              Endpoint, `Dataset Index`, Study) %>%
+  drop_na()
+
+#reformat
+BMD_formatted <- modeled_summary_data %>%
+  rename(Dose_mg_kg_d_background_added = Dose_mg_kg_d,
+           Dose_mg_kg_d = Dose_mg_kg_d_OG) %>% 
+  #fill in missing values
+  mutate(Dose_mg_kg_d = case_when(
+    is.na(Dose_mg_kg_d) ~ signif(Dose_mg_kg_d_background_added,3),
+    T ~ Dose_mg_kg_d
+  )) %>% 
+ 
+  #get measured serum data
+  left_join(serum_comparison %>% select(Study, chem, sex, species_name,
+                                        route, Measured_serum, Dose_mg_kg_d)) %>% 
+  rename(Compound = chem,
+         Species = species_name,
+         Sex = sex,
+         `measured ug/mL` = Measured_serum,
+         ) %>% 
+  mutate(Duration = Exposure_duration_hr / 24) %>% 
+  mutate(Duration = case_when(
+   Study == "Anonymous 2017" ~ 105,
+    T ~ Duration
+  )) %>% 
+  mutate(Compound = case_when(
+    Compound == "PFHPA" ~ "PFHpA",
+    Compound == "PFHXA" ~ "PFHxA",
+    Compound == "PFHXS" ~ "PFHxS",
+    T ~ Compound
+  ), Study = case_when(
+    Study == "Butenhoff et al 2012a (published), van Otterdijk 2007a (3M study - cannot find online; in CDs?) male Sprague Dawley rats (Crl:CD,\r\noutbred, SPF quality)" ~ "Butenhoff et al 2012",
+    Study == "NTP 2019a" ~ "NTP 2019 a",
+    T ~ Study)) %>% 
+  #keep identifying column
+  mutate(Administered_dose_mg_kg_d = Dose_mg_kg_d) %>% 
+  pivot_longer(cols = c(Dose_mg_kg_d, Cmax_mg_L, AUC_mg_L, TWA_mg_L, 
+                        AUC_ss_mg_L, TWA_css_mg_L, `measured ug/mL`),
+              names_to = "Dose metric",
+               values_to = "Dose") %>% 
+  #get chem data
+  left_join(chem_aux, by = "Compound") %>% 
+  left_join(experiment_conditions, by = c("Compound", "Species", 
+                                           "Sex", "Dose metric", "Study")) %>% 
+  select(`Carbon number`, Compound, `Compound form`, Type, Species, Duration,
+         MW, Study, Sex, `Endpoint type`, Endpoint, `Dataset Index`, Administered_dose_mg_kg_d,
+         Dose, `Dose metric`) %>% 
+ # drop_na() %>% 
+  distinct()
+
+# 0-level doses were exluded in my analysis, but Heather included them - so we'll extracty and join those rows here
+old <- example %>% 
+  select(-n, Mean, StDev) %>% 
+  filter(`Dose metric` %in% c("measured ug/mL"))
+
+new <- BMD_formatted %>% 
+  filter(`Dose metric` %in% c("measured ug/mL"))
+
+measured_rows <- anti_join(old, new)
+
+##also get 0-dose values for Cmax, AUC, TWA, etc.
+old_zeros <- example %>% 
+  select(-n, Mean, StDev) %>% 
+  filter(Dose == 0)
+
+missing_zeros <- anti_join(old_zeros, BMD_formatted)
+  
+# add the rows with 0-level doses back in
+BMD_formatted_added <- bind_rows(BMD_formatted, measured_rows, missing_zeros) %>% 
+  distinct()
+
+# Arrange by numeric part of Dataset Index and then by Dose
+BMD_formatted_sorted <- BMD_formatted_added %>%
+  mutate(NumericIndex = as.numeric(gsub("ID", "", `Dataset Index`))) %>% # Extract numeric part
+  arrange(NumericIndex, Dose) %>% # Sort by numeric index and then Dose
+  select(-NumericIndex) %>%  # Remove the temporary column
+  #keep added rows for debugging
+  rename(Mean_OG = Mean,
+         uniqueID_OG = uniqueID,
+         StDevOG = StDev
+         ) %>% 
+  mutate(uniqueID = row_number()) %>% 
+  #join with n, Mean, StDev from example set
+  left_join(example %>% select(uniqueID, Study, Compound, 
+                               Species, Sex, `Dose metric`, 
+                               `Dataset Index`, n, Mean, StDev)) %>% 
+  mutate(Administered_dose_mg_kg_d = case_when(
+    is.na(Administered_dose_mg_kg_d) & `Dose metric` != "measured ug/mL" ~ 0,
+    T ~ Administered_dose_mg_kg_d
+  )) %>% 
+  drop_na(Administered_dose_mg_kg_d) %>% 
+  left_join(example %>% select(Study, Compound, 
+                               Species, Sex, `Dose metric`, Dose,
+                               `Dataset Index`,
+                               n_new = n, Mean_new = Mean, StDev_new = StDev)) %>% 
+  mutate(n = case_when(
+    is.na(n) & !is.na(n_new) ~ n_new,
+    T ~ n
+  ),
+  Mean = case_when(
+    is.na(Mean) & !is.na(Mean_new) ~ Mean_new,
+    T ~ Mean
+  ),
+ StDev = case_when(
+    is.na(StDev) & !is.na(StDev_new) ~ StDev_new,
+    T ~ StDev
+  )
+  ) %>% 
+  select(-n_new, -Mean_new, - StDev_new,
+          -contains("OG", ignore.case = F))
+  
+
+head(BMD_formatted_sorted)
+
+library(openxlsx)
+write.xlsx(x = BMD_formatted_sorted, file = here("data_output/BMD_formatted_serum_data.xlsx"))
+
+## debugging
+distinct_BMD <- BMD_formatted %>% 
+  distinct(Compound, Species, Sex, `Endpoint type`, 
+           `Dose metric`,Endpoint, `Dataset Index`, Study)
+
+anti_join(distinct_BMD, experiment_conditions)
+anti_join(experiment_conditions, distinct_BMD)
+```
+
+### Liver dataset from 12-31-2024
+
+```{r}
+liver_data <- readxl::read_excel(here("data_input/Liver weight data sets complete with updated dose to serum conversion 12.31.2024 w addition of 16 week study.xlsx", sheet = "Detailed"))
+
+#rename so we can join with thyroid
+liver_data <- liver_data %>% 
+  # rename(n_liver = n,
+  #        mean_liver = Mean,
+  #        stdev_liver = StDev) %>%
+  #Heather somehow changed this value...
+  mutate(Administered_dose_mg_kg_d = case_when(
+    Administered_dose_mg_kg_d == 62.64 ~ 62.60,
+    T ~ Administered_dose_mg_kg_d
+  )) %>% 
+  #Heather changed a value for Jiang et al. from 61 to 60 for some reason
+  mutate(Duration = case_when(
+    Duration == 60 ~ 61,
+    T ~ Duration
+  ))
+
+#just get unique data for pairing to more complicated set
+primary_data <- BMD_formatted %>%
+  distinct(Compound, Species, Study, Duration, Sex, Administered_dose_mg_kg_d, Dose, `Dose metric`) %>% 
+  rename(Dose_update = Dose,
+         Study_original = Study) 
+
+#join to thyroid dataset
+liver_update <- left_join(liver_data, primary_data,
+                             by = c("Compound", "Species", "Duration", #"Study",
+                                    "Sex", "Administered_dose_mg_kg_d", "Dose metric")) %>% 
+  mutate(`Dose metric` = case_when(
+    `Dose metric` == "ug/mL - measured" ~"Measured_mg_L",
+    `Dose metric` == "measured ug/mL" ~"Measured_mg_L",
+    `Dose metric` == "mg/kg-day" ~ "Dose_mg_kg_d",
+    T ~ `Dose metric`
+  )) %>% 
+  mutate(Dose_update = case_when(
+    Administered_dose_mg_kg_d == 0 & `Dose metric` != "Measured_mg_L" ~ 0,
+    `Dose metric` == "ng/g - liver - measured" ~ Dose,
+    `Dose metric` == "ng/mL - liver - measured" ~ Dose,
+    `Dose metric` == "Measured_mg_L" ~ Dose,
+    `Dose metric` == "Dose_mg_kg_d" ~ Dose,
+    T ~ Dose_update
+  ))
+
+liver_update %>% 
+  filter(is.na(Dose_update)) %>% 
+  head()
+
+skimr::skim(liver_update)
+```
+
+Great! 100% of values are filled in for Dose_update. Now clean up and
+send to Heather.
+
+```{r}
+liver_update_final <- liver_update %>% 
+  select(-c(Dose, Study_original)) %>% 
+  rename(Dose = Dose_update)
+
+#write.xlsx(x = liver_update_final, file = "data_output/BMD_formatted_liver.xlsx")
+```
+
+## Export all data to excel
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# List of data frames to export (replace df1, df2 with actual data frames)
+data_frames <- list(tk_match_summary = tk_match_summary,
+                    modeled_summary_data = modeled_summary_data,
+                    serum_comparison = serum_comparison,
+                    lm_results = lm_results,
+                    model_compare_metrics = model_compare_metrics
+                    #twa_df_multiple = twa_df_multiple #full prediction data
+                    )  # Modify as needed
+
+sheet_names <- c("Matched TK Data", "Summary Data", "Measured Serum Comparison", 
+                 "Serum-Predicted LM", "Model Validation"
+                 # "Time-Point Simulations"
+                 )  # Customize sheet names
+
+# Loop over the list of data frames and write each to a custom-named sheet
+for (i in seq_along(data_frames)) {
+  addWorksheet(wb, sheetName = sheet_names[i])  # Add a sheet with the custom name
+  writeData(wb, sheet = sheet_names[i], data_frames[[i]])  # Write the data frame to the sheet
+}
+
+# Save the workbook to an Excel file
+saveWorkbook(wb, file = here("data_output/dose_to_serum_data.xlsx"), overwrite = TRUE)
+```
+
+# Theoretical model with identical dosage and exposure duration
+
+## Generate Time Series DAta
+
+```{r}
+twa_df_multiple_theor <- twa_df %>%
+  mutate(Exposure_duration_hr = 672,
+         tau_hr = 24,
+         Dose_mg_kg_d = 1) %>% 
+  distinct() %>% 
+  mutate(
+    ke = log(2) / HLe_invivo,  # Calculate elimination constant from half-life
+    num_doses_per_day = 24 / tau_hr,  # Calculate the number of doses administered per 24 hours
+    D_per_dose = Dose_mg_kg_d / num_doses_per_day,  # Split the total daily dose evenly by tau
+    kabs = as.numeric(kabs),  # Ensure kabs is numeric
+    VDss_L_kg = as.numeric(VDss_L_kg),  # Ensure Vd is numeric
+    tau = as.numeric(tau_hr),  # Ensure tau is numeric
+    D_per_dose = as.numeric(D_per_dose),  # Ensure dose is numeric
+    ke = as.numeric(ke),  # Ensure ke is numeric
+    n_doses = floor(Exposure_duration_hr / tau)  # Calculate number of doses administered during exposure
+  ) %>%
+  rowwise() %>%
+  mutate(
+    # Generate time points during and after exposure
+    time_points = list(seq(0, Exposure_duration_hr + n_extra_time, by = 1)),
+    
+    # Apply both models and calculate concentrations for each time point
+    concentration_time_series = list(
+      tibble(
+        time = time_points,
+        
+        # Two-phase model (if all alpha/beta phase params are available). 
+        two_phase_conc = if (!is.na(kabs) & !is.na(k_alpha) & !is.na(k_beta) & !is.na(VD2) & !is.na(VDc)){
+        map_dbl(time_points, ~ two_phase_function(D_per_dose = D_per_dose,
+                                                  #alpha phase params
+                                                  VD2 = VD2, #VD0_l/kg
+                                                  k_alpha = k_alpha,
+                                                  kabs = kabs, 
+                                                  #beta phase params
+                                                  k_beta = k_beta,
+                                                  VDc = VDc, #VDss_L/kg
+                                                  tau = tau,
+                                                  n_doses = n_doses, t = .x,
+                                                  # Handle NA for t_alpha_end
+                                                  exposure_duration_hr = exposure_duration_hr
+                                                  ))
+        } else {
+          NA_real_ #if all two-phase params are not present, set to NA
+        },
+        
+        # Full model concentration (if kabs is available)
+        full_model_conc = if (!is.na(kabs)) {
+          map_dbl(time_points, ~ full_conc(D_per_dose, VDss_L_kg, ke, kabs, tau, n_doses, .x, Exposure_duration_hr))
+        } else {
+          NA_real_  # If kabs is not available, set to NA
+        },
+        
+        # Simplified model concentration
+        simple_model_conc = map_dbl(time_points, ~ simplified_conc(D_per_dose, VDss_L_kg, ke, tau, n_doses, .x, Exposure_duration_hr)),
+        
+        # Specify the model used (full or simple)
+        model_used = if (!is.na(kabs)) "full" else "simple",  
+        
+        # Specify model availability (both or only simple)
+        model_availability = if (!is.na(kabs)) "both" else "simple_only"  
+      )
+    )
+  ) %>%
+  unnest(concentration_time_series) %>%
+  mutate(
+    # Use the full model concentration if available, otherwise use the simplified model concentration
+    concentration = ifelse(!is.na(full_model_conc), full_model_conc, simple_model_conc)
+  ) %>%
+  ungroup()
+```
+
+```{r}
+pk_params_theor <- twa_df_multiple_theor %>%
+  drop_na(concentration) %>% 
+  filter(model_used %in% c("full", "simple")) %>%
+  group_by(Study, chem, sex, species_name, strain, route, model_used,
+           CLTot_L_kg_day, HLe_invivo, VDss_L_kg,
+           Exposure_duration_hr, Dose_mg_kg_d) %>%
+  summarise(
+    Cmax = max(concentration, na.rm = TRUE),  # Maximum concentration
+    AUC = calculate_auc(time / 24, concentration),  # AUC using trapezoidal rule, converting time to days
+    TWA = AUC / max(time / 24)  # Time-weighted average concentration (AUC / total duration in days)
+  ) %>%
+  ungroup() %>%
+  # Round numeric values to 4 significant digits
+  mutate(across(where(is.numeric), ~signif(., 4))) %>%
+  distinct()  
+  # Merging pk_params with annotation information (species, sex, route, etc.)
+```
+
+## Heatmap
+
+```{r}
+params_heat <- pk_params_theor  %>% 
+  pivot_longer(cols = c(Cmax, AUC#, TWA
+                        )) %>% 
+  group_by(name) %>%
+  mutate(normalized_value = (value - min(value, na.rm = TRUE)) /
+           (max(value, na.rm = TRUE) - min(value, na.rm = TRUE))) %>%
+    ungroup() %>%
+  arrange(chem) %>% ggplot(aes(x = name, 
+                               y = paste(chem, sex, species_name, route,
+                                         sep = " - "), 
+                               fill = normalized_value + 0.001,
+                               text = paste0("Chemical: ", chem,"<br>",
+                                             "Species: ", species_name, "<br>",
+                                             "Route of Exposure:", route, "<br>",
+                                             "Sex: ", sex, "<br>",
+                                             "Computed Metric: ", name, "<br>",
+                                             "Value: ", value, "<br>"))) +
+  geom_tile(color = "white") +
+  
+  # Use the normalized value for the color scale
+   scale_fill_gradient(trans = scales::log_trans(base = 10),
+                      low = "#56B1F7",
+                      high = "red4",
+                      space = "Lab",
+                      na.value = "grey50",
+                     ) +
+  
+  # Labels and theme
+  labs(x = "Toxicokinetic Parameters", 
+       y = "Chemical - Sex - Species",
+       title = "Comparison of Computed Metrics",
+       subtitle = "Identical Exposure Duration (28 d) and Dose (1 mg/kg-d)") +
+  theme_minimal(base_size = 15) +
+  theme(axis.text.y = element_text(size = 14),  # Adjust the y-axis text size
+        axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none")
+
+
+# ggsave( "figures/summary_params_heat.jpg",
+#         params_heat,
+#         width = 13, height = 6,
+#        dpi = 300)
+
+params_heat
+```
+
+## Scatterplot
+
+```{r}
+params_scatter <- pk_params_theor  %>% 
+  ggplot(aes(x = TWA, 
+             y = Cmax,
+             color = paste(chem, species_name, #route,
+                                         sep = " - "),
+             shape = sex,
+             text = paste("Chemical:", chem, "<br>",
+                              "Species:", species_name, "<br>",
+                              "Sex:", sex, "<br>",
+                              "Route:", route, "<br>",
+                              "AUC:", AUC, "<br>",
+                              "TWA:", TWA, "<br>",
+                              "Half-Life:", HLe_invivo, "hr", "<br>",
+                              "VD:", VDss_L_kg, "L/kg"))) +
+  
+  geom_point(size = 3, alpha = 0.9) +
+  
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  scale_colour_discrete_c4a_cat("poly.alphabet") +
+  scale_x_log10("Time-weighted Average (mg/L)",
+                limits = c(0.2, 250)
+                ) +
+  scale_y_log10("Maxmimum Concentration (mg/L)",
+                limits = c(0.2, 250)
+                ) +
+  # Labels and theme
+  labs(x = "Toxicokinetic Parameters", 
+       y = "Chemical - Sex - Species",
+       title = "Comparison of Computed Metrics",
+       subtitle = "Identical Exposure Duration (28 d) and Dose (1 mg/kg-d)") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.y = element_text(size = 14),  # Adjust the y-axis text size
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "bottom")
+
+# ggsave( "figures/params_scatter.jpg",
+#         params_scatter,
+#         width = 13, height = 6,
+#        dpi = 300)
+
+params_scatter
+```
+
+```{r}
+params_scatter_plotly <- ggplotly(params_scatter,
+                            tooltip = "text")
+
+# Save the Plotly plot to an HTML file
+#saveWidget(params_scatter_plotly, "figures/params_scatter_plotly.html", selfcontained = TRUE)
+
+params_scatter_plotly
+```
+
+## Model CMAX vs. AUC Relative Diff
+
+```{r}
+#calculate ratio
+pk_params_theor_ratio <- pk_params_theor %>% 
+  mutate(AUC_Cmax_ratio = AUC / Cmax)
+  
+
+# model ratio
+summary(lm(AUC_Cmax_ratio ~ sex + route + species_name + HLe_invivo + VDss_L_kg + chem,pk_params_theor_ratio))
+```
+
+```{r}
+pk_params_theor_ratio_scatter <- pk_params_theor_ratio %>% 
+  ggplot(aes(x = AUC_Cmax_ratio, y = HLe_invivo,
+             color = chem,
+             shape = route,
+               text = paste("Chemical:", chem, "<br>",
+                              "Species:", species_name, "<br>",
+                              "Sex:", sex, "<br>",
+                              "Route:", route, "<br>",
+                              "AUC:", AUC, "<br>",
+                              "TWA:", TWA, "<br>",
+                              "Half-Life:", HLe_invivo, "hr", "<br>",
+                              "VD:", VDss_L_kg, "L/kg"))) +
+  geom_point(size = 3, alpha = 0.9) +
+  scale_x_log10("AUC / CMax") +
+  scale_y_log10("EliminationHalf-Life (hr)") +
+  # Labels and theme
+  labs(title = "AUC/CMax Ratio vs. Relevant Predictors",
+       subtitle = "Identical Exposure Duration (28 d) and Dose (1 mg/kg-d)") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.y = element_text(size = 14),  # Adjust the y-axis text size
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "bottom")
+
+# ggsave( "figures/pk_params_theor_ratio_scatter.jpg",
+#         pk_params_theor_ratio_scatter,
+#         width = 13, height = 6,
+#        dpi = 300)
+
+pk_params_theor_ratio_scatter
+```
+
+```{r}
+pk_params_theor_ratio_scatter_plotly <- ggplotly(pk_params_theor_ratio_scatter,
+                            tooltip = "text")
+
+# Save the Plotly plot to an HTML file
+#saveWidget(pk_params_theor_ratio_scatter_plotly, "figures/pk_params_theor_ratio_scatter_plotly.html", selfcontained = TRUE)
+
+pk_params_theor_ratio_scatter_plotly
+```
+ 

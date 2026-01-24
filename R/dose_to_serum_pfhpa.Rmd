@@ -1,0 +1,763 @@
+---
+title: "Dose to Serum"
+date: "2024-06-28"
+output:   
+  html_document:
+    code_folding: hide
+    theme: journal
+    toc: yes
+    toc_float: yes
+    toc_depth: 6
+    number_sections: true
+    includes:
+     # after_body: footer.html
+  word_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# setup
+```{r}
+library(tidyverse)
+```
+
+CD-1 mice were exposed to PFHpA via gavage in a 90-day repeated dose toxicity study at three doses (0.5, 10, and 50 mg/kg bw/d) and control (Anonymous, 2017). To convert the administered dose (in mg/kg body weight per day) to serum concentrations, several toxicokinetic parameters must be accounted for, including bioavailability via the route of exposure (i.e., gavage), body weight, dispersion of PFHpA in the body relative to the blood or plasma (i.e., volume of distribution [Vdss]), and elimination rate (kelim).
+
+# Half Life
+A single-compartment TK model may be used for PFHpA, as discussed in Fujii et al. (2015). The elimination rate constants for male and female mice correspond to 0.20 +- 0.1 (male mice) and 0.18 +- 0.08 (female mice). The half-life is equivalent to ln(2)/Kelim, and is equivlant to:
+```{r}
+t_1_2fnx <- function(kelim){
+  t_1_2 = log(2)/kelim
+  return(t_1_2)
+}
+
+#propagate unceratinty
+t_1_2_sdfnx <- function(kelim, kelim_sd){
+  t_1_2_sd = (log(2) / (kelim * kelim)) * kelim_sd
+  return(t_1_2_sd)
+}
+
+
+### gavage
+k_elim_male_gavage = 0.18 #hr-1
+k_elim_male_gavage_sd = 0.06 #hr-1
+k_elim_female_gavage = 0.14 #hr-1
+k_elim_female_gavage_sd = 0.05 #hr-1
+  
+t1_2_male_gavage <- t_1_2fnx(k_elim_male_gavage)
+t1_2_male_gavage_sd <- t_1_2_sdfnx(kelim = k_elim_male_gavage, kelim_sd = k_elim_male_gavage_sd)
+t1_2_female_gavage <- t_1_2fnx(k_elim_female_gavage)
+t1_2_female_gavage_sd <- t_1_2_sdfnx(k_elim_female_gavage, k_elim_female_gavage_sd)
+
+### IV
+k_elim_male_iv = 0.20 #hr-1
+k_elim_male_iv_sd = 0.10 #hr-1
+k_elim_female_iv = 0.18 #hr-1
+k_elim_female_iv_sd = 0.08 #hr-1
+  
+t1_2_male_iv <- t_1_2fnx(k_elim_male_iv)
+t1_2_male_iv_sd <- t_1_2_sdfnx(k_elim_male_iv, k_elim_male_iv_sd)
+t1_2_female_iv <- t_1_2fnx(k_elim_female_iv)
+t1_2_female_iv_sd <- t_1_2_sdfnx(k_elim_female_iv, k_elim_female_iv_sd)
+
+t_1_2_df <- data.frame("variable" = "t_1_2",
+                       "units" = "hr",
+                       "chem" = "PFHPA",
+                       "route" = c("Intragastric", "Intragastric",
+                                   "Intravenous", "Intravenous"),
+                       "sex" = c("M", "F", "M", "F"), 
+                       "value" = c(t1_2_male_gavage, t1_2_female_gavage,
+                                   t1_2_male_iv, t1_2_female_iv),
+                       "sd" = c(t1_2_male_gavage_sd,
+                                t1_2_female_gavage_sd,
+                                   t1_2_male_iv_sd, t1_2_female_iv_sd))
+
+t_1_2_df
+```
+## Steady-State
+For a fraction remaining of 0.10 (i.e., 90% removal), it take 3.32 half-lives (n = log10(fraction_remaining) / log10(1/2)).
+It therefore requires the following number of half-lives to reach steady state for PFHpA:
+```{r}
+t_1_2_df %>% 
+  mutate(t_steady_state_hr = value * 3.32,
+         t_steady_state_hr_sd = sd * 3.32)
+```
+
+
+Because mice were dosed repeatedly, the average whole body, steady-state serum concentration (Css,ave; mg/L) can be determined for regular dosing intervals with the following equation:
+
+```{r}
+CssFnx <- function(dose_mg_kg, F_frac, ClTot_L_kg_day, tau_day){
+  Css_mg_L = (dose_mg_kg * F_frac)/(ClTot_L_kg_day * tau_day)
+  return(Css_mg_L)
+  }
+```
+
+Where Dose is the body-weight normalized dose per administration (mg/kg-body weight), F is the bioavailability fraction (unitless) via the route of exposure (i.e., intragastric gavage), Cltot is the whole body clearance rate (volume of blood cleared of the chemical per unit time; L/kg body weight/day), and τ is the dosing interval (days).
+
+
+PFHpA has been shown to be rapidly eliminated in the urine in rats and mice in several studies. Following intraperitoneal injection in Wistar rats, 92% of a PFHpA dose was eliminated in urine 120 hours following dosing (Kudo et al., 2001). In a comparable mouse study, similar results were observed. NJcl mice administered PFHpA intravenously or by gavage rapidly eliminated the chemical in urine 24 hours following administration (99% for males, and 6679% for females), with small amounts excreted in feces (3% for males and 13% for females). Similar clearance patterns were found between intravenously- (3.474 x 10-3 ± 0.0861 L/kg day and 2.567 x 10-3 ± 0.1244 L/kg day for males and females, respectively; mean ± s.d.) and gavage- (2.925 x 10-3 ± 0.1538 L/kg day and 1.902 x 10-3 ± 0.0217 L/kg day for males and females, respectively; mean ± s.d.)) administered mice (Fujiii et al. 2015). 
+
+#Data input
+
+**In vivo** toxicokinetic data on PFHpA were extracted from Fujii et al (2015).
+```{r message=FALSE, warning=FALSE}
+#data were extracted from Tables S7 (b) and Table 1(a) of Fujii et al. (2015)
+Fujii <- readxl::read_excel("data_input/pfhpa TK.xlsx",
+                   sheet = "tidy_data") %>% 
+  mutate(sex = case_when(sex == "Male" ~ "M",
+                         sex == "Female" ~ "F"),
+         route = case_when(route == "intragastric" ~ "Intragastric",
+                           route == "intravenous" ~ "Intravenous"))
+
+
+#import tidy data on all PFAS pulled from EAS-E Suite
+tk_pfas <- readxl::read_excel("data_input/tk_pfas_easesuite.xlsx",
+                              sheet = "tk_pfas")
+
+## select only data needed
+F_data <- tk_pfas %>% 
+  filter(#species_name == "Mouse",
+         #route == "Intragastric",
+         standard_endpoint == "F") %>% 
+  select(chem, route, species_name, sex, standard_value) %>% 
+  rename(F_frac = standard_value,
+         species = species_name) %>% 
+  mutate(F_frac = F_frac / 100) #percentage to fraction bioavailable
+```
+
+#Bioavalable Fraction
+The bioavailable fraction (F, unitless) via intragastric gavage route of exposure for PFHpA has been determined in both male and female FVB/NJcl mice through comparison of toxicokinetic data obtained for 24-hour single-dose administration via gavage and intravenous routes of exposure (Fujii et al. 2015). The bioavailable fraction was calculated as the ratio of the dose-adjusted area under the curve (AUC) of the gavage /intravenous routes of exposure and are estimated to be 0.6 and 0.9 for male and female mice, respectively (Fuijii et al. 2015). Values presented in Table 1(c) of Fujii et al. (2015) only contained one significant digit, despite the underlying data being reported as 3 significant digits. Accordingly, these values were recalculated here.
+
+## Data prep
+```{r}
+## Recalcaulte F values with 3 sig digs
+# tk_pfas %>% filter(authors == "Fujii",
+#                    standard_endpoint == "AUC_t") %>% 
+#   distinct(chem, sex, route, .keep_all = T) %>% 
+#   select(chem, route, standard_value, sex) %>% 
+#   pivot_wider(names_from = route,
+#               values_from = standard_value) %>% 
+#   mutate(F_frac = Intragastric / (Intravenous * 10))
+
+### data is already input into EASE-E Suite, but it lacks uncertainty values. need to annotate those to do MC sim
+
+AUC <- Fujii %>% filter(variable == "AUC_t_24hr") %>% 
+  distinct(chem, sex, route, units, .keep_all = T) %>% 
+  select(chem, route, species, variable, units, value,  sd, sex)
+
+F_df <- AUC %>% 
+  pivot_wider(names_from = route,
+              values_from = c(variable,value, sd)) %>% 
+  mutate(F_frac_deterministic = value_Intragastric / (value_Intravenous * 10)) %>% 
+  distinct(chem, sex,  F_frac_deterministic) %>% 
+  mutate(variable = "F_frac_deterministic",
+         route = "Intragastric",
+         sd = NA,
+         species = "Mouse",
+         value = F_frac_deterministic,
+         units = "fraction") %>% 
+  select(-F_frac_deterministic)
+  
+AUC_df <- rbind(AUC, F_df)
+
+AUC_df
+```
+
+
+```{r}
+# Clearance data for renal (gavage) used
+renal_CL <- data.frame(variable = "clearance_renal",
+                       units = "L/(kg*day)",
+                       chem = "PFHPA",
+                       species = "Mouse",
+                       route = "Intragastric",
+                       sex = c("M", "F"),
+                       value = c(0.3367, 0.2163),
+                       sd = c(0.0935, 0.1209),
+                       doi = "10.1539/joh.14-0136-OA")
+
+#bind to Fujii
+Fujii <- rbind(Fujii %>%  select(-doi),
+               renal_CL %>%  select(-doi),
+               F_df)
+
+#prep data for joining
+# clearance <- Fujii %>% 
+#   filter(variable == "total clearance_L_kgxday") %>% 
+#   select(chem, species, route, sex, value, sd)# %>% 
+#   #rename(ClTot_L_kg_day = value,
+#    #      ClTot_L_kg_day_sd = sd)
+
+# join data for wide manipulation
+# clearance_F <-  left_join(clearance, AUC_df,
+#                           by = c("chem", "sex"))
+
+Fujii
+```
+
+## Derivation
+
+The bioavailable fraction (FIG, unitless) via intragastric gavage route of exposure for PFHpA has been determined in both male and female FVB/NJcl mice through comparison of toxicokinetic data obtained for 24-hour single-dose administration via gavage and intravenous routes of exposure (Fujii et al. 2015). The bioavailable fraction for the intragastric route of exposure may be calculated by dividing the dose-adjusted area under the serum concentration versus time curve for a given time-period (AUC) of PFHpA administered via the intragastric route of exposure by the dose-adjusted AUC of PFHpA administered intravenously (AUC) for the same time-period, as shown in equation 2 (Nomeir et al. 2009). 
+
+Equation 2	F_IG=〖AUC〗_IG/〖AUC〗_IV  x 〖Dose〗_IV/〖Dose〗_IG 
+```{r}
+Ffnx <- function(AUC_IG, AUC_IV, Dose_IV, Dose_IG){
+  F_IG = (AUC_IG / AUC_IV) * (Dose_IV / Dose_IG)
+  return(F_IG)
+}
+
+#e.g. PFHpA
+AUC_IG_male = 141 #male #umol*hr/L
+AUC_IV_male = 22.2 #male #umol*hr/L
+AUC_IG_female = 215 #female #umol*hr/L
+AUC_IV_female = 23.6 #female #umol*hr/L
+Dose_IV = 0.313 #male #umol*kg
+Dose_IG = 3.13 #male #umol*kg
+
+F_IG_male <- Ffnx(AUC_IG = AUC_IG_male, 
+                  AUC_IV = AUC_IV_male, 
+                  Dose_IV = Dose_IV, Dose_IG = Dose_IG)
+
+F_IG_female <- Ffnx(AUC_IG = AUC_IG_female, 
+                  AUC_IV = AUC_IV_female, Dose_IV = Dose_IV, Dose_IG = Dose_IG)
+
+
+
+print(paste0("Male PFHpA F:", signif(F_IG_male,3), "  ; ",
+      "Female PFHpA F:", signif(F_IG_female,3)))
+```
+
+
+Fujii et al. (2015) estimated the bioavailable fraction of PFHpA using Equation 2 with the AUC at 24 hours, in which the intravenous dose (DoseIV) was 0.313 µmol/kg, and the intragastric dose (DoseIG) was 3.13 µmol/kg, arriving at average bioavailability fraction values of 0.6 and 0.9 for male and female mice, respectively (Fuijii et al. 2015). Several improvements may be made to this approach, however. Specifically, the authors did not consider the reported uncertainty measurements of measurements in AUC in their calculation of these values, therefore preventing reliable estimates of uncertainties in additional calculations based on these values. Additionally, in general it is preferable to use estimated AUCs for infinity (AUC∞) as opposed to AUCs for a given time (e.g., 24 hours), as the limited time-period AUC may not cover the entire elimination phase of the chemical, therefore resulting in underestimates of the total exposure and therefore an inaccurate estimate of the bioavailable fraction. This is particularly relevant for slow-eliminating chemicals, such as long-chain PFAS. The estimated area under the serum concentration versus time curve from the last measured time to infinity (AUCt-∞) may be extrapolated from a given time-period (e.g., 24 hours) to infinity according to equation 3 (Nomeir et al. 2009).
+
+Equation 3 		〖AUC〗_(t-∞)=C_t/k_elim 
+
+```{r}
+AUC_t_inf_fnx <- function(C_t, k_elim){
+  AUC_t_inf = C_t / k_elim 
+
+  return(AUC_t_inf)
+  }
+```
+
+
+Where AUCt-∞ may be measured in mg·h/L, Ct is the last measurable concentration (mg/L) in serum, and kelim is the elimination rate constant (hr-1). The area under the curve of the last measured time to infinity (AUCt-∞) may then be added to the area under the curve of the measured time-period (AUC0-t) to obtain the area under the curve for infinity (AUC∞), as defined in equation 4.
+
+Equation 4		〖AUC〗_∞=〖AUC〗_(0-t)+ 〖AUC〗_(t-∞)
+
+```{r}
+AUC_inf_fnx <- function(AUC_0_t, AUC_t_inf){
+  AUC_inf = AUC_0_t + AUC_t_inf 
+
+  return(AUC_inf)
+  }
+```
+
+Where AUC0-t is the area under the serum concentration versus time curve from time zero to the time of final quantifiable sample (e.g., 24 hours), Ct is the concentration at the time of final quantifiable sample and Kelim is the terminal elimination rate constant.
+
+Fujii et al. (2015) fit a two-compartment toxicokinetic model using nonlinear optimization with a least-square approach for intravenous and intragastric exposures. The apparent elimination constant (kelim) for a single-compartment model (Equation 5) can be approximated as λ2, which is the slower rate constant (i.e., elimination rate constant) from the two-compartment model derived in Fujii et al. (2015).
+
+		Equation 5		C(t)≈C_2∙e^(〖-λ〗_2t )
+		
+ For PFHpA, these values correspond to 0.20 ± 0.1 hr-1 in male mice and 0.18 ± 0.08 hr-1 in female mice. The final measured concentration of PFHpA in serum in Fujii et al. (2015) were below the detectable concentrations in both female (<0.22 nmol/kg) and mile mice (<0.32 nmol/kg) at 24 hours, however these detection limits may be used as C24 in lieu of measured concentrations to estimate the AUCt-∞. The AUC∞ values may then be calculated using equations 3, 4 and 5, and correspond to:
+
+###AUC_inf
+```{r}
+# gavage
+k_elim_male_gavage = 0.18 #hr-1
+k_elim_female_gavage = 0.14 #hr-1
+Ct_male_gavage = 3.2e-4 #umol/L @ 24hr in serum
+Ct_female_gavage = 2.2e-4 #umol/L @ 24hr in serum
+
+AUC_t_inf_male_gavage <- AUC_t_inf_fnx(Ct_male_gavage, k_elim_male_gavage)
+AUC_t_inf_female_gavage <- AUC_t_inf_fnx(Ct_female_gavage, k_elim_female_gavage)
+
+AUC_inf_male_gavage <- AUC_inf_fnx(AUC_IG_male, AUC_t_inf_male_gavage)
+AUC_inf_female_gavage <- AUC_inf_fnx(AUC_IG_female, AUC_t_inf_female_gavage)
+
+# iv
+k_elim_male_iv = 0.20 #hr-1
+k_elim_female_iv = 0.18 #hr-1
+Ct_male_iv = 3.e-5 #umol/L @ 24hr in serum
+Ct_female_iv = 2.e-5 #umol/L @ 24hr in serum
+
+AUC_t_inf_male_iv <- AUC_t_inf_fnx(Ct_male_iv, k_elim_male_iv)
+AUC_t_inf_female_iv <- AUC_t_inf_fnx(Ct_female_iv, k_elim_female_iv)
+
+AUC_inf_male_iv <- AUC_inf_fnx(AUC_IV_male, AUC_t_inf_male_iv)
+AUC_inf_female_iv <- AUC_inf_fnx(AUC_IV_female, AUC_t_inf_female_iv)
+
+print(paste("AUC_inf_male_IG = ", AUC_inf_male_gavage,
+            "AUC_inf_female_IG = ", AUC_inf_female_gavage,
+            "AUC_inf_male_IV = ", AUC_inf_male_iv,
+            "AUC_inf_female_IV = ", AUC_inf_female_iv))
+```
+
+
+### Error propagation
+When propagating uncertainty for a fraction using arithmetic means and standard deviations, you can use the rules for error propagation. Here's how you can propagate uncertainty for a fraction, specifically for calculating bioavailability (F) from AUCs.
+
+Error Propagation for a Fraction
+```{r}
+sd_FFnx <- function(F_IG, sd_IG, sd_IV, AUC_IG, AUC_IV) {
+  sd_F = F_IG * sqrt((sd_IG / AUC_IG)^2 + (sd_IV / AUC_IV)^2 - 
+                       2 * (sd_IG * sd_IV)/(AUC_IG * AUC_IV))
+  return(sd_F)
+}
+
+sd_IG_male = 51 #AUC_IG @ dose = 3.13
+sd_IG_female = 156 #AUC_IG @ dose = 3.13
+
+sd_IV_male = 8.4 #AUC_IV @ dose = 0.313
+sd_IV_female = 12.4 #AUC_IV @ dose = 0.313
+
+sd_F_male <- sd_FFnx(F_IG = F_IG_male, 
+                     AUC_IG = AUC_IG_male / Dose_IG,
+                     AUC_IV = AUC_IV_male  / Dose_IV,
+                     sd_IG = sd_IG_male / Dose_IG,
+                     sd_IV = sd_IV_male / Dose_IV)
+
+sd_F_female <- sd_FFnx(F_IG = F_IG_female, 
+                     AUC_IG = AUC_IG_female / Dose_IG,
+                     AUC_IV = AUC_IV_female  / Dose_IV,
+                     sd_IG = sd_IG_female / Dose_IG,
+                     sd_IV = sd_IV_female / Dose_IV)
+
+print(paste("F (male) =", signif(F_IG_male,3), "+-", signif(sd_F_male,3),
+            "F (female) =", signif(F_IG_female,3), "+-", signif(sd_F_female,3)))
+```
+The same general formula may be used to estimate the standard deviation for Css,avg, as the only two parameters with associated uncertainty values in Equation 1 are FIG and Cltot. The formula for estimating the standard deviation of Css is described in equation 7.
+
+# Css determination
+In the case of the 90-day repeated exposure study (Anonymous, 2017), the administered dose for a given interval (Dose) are either 0.5, 10 or 50 mg/kg-body weight. These gavage-adminstered doses are converted to serum concentrations using equation 1, using PBPK values from Table 1. In the case of Cltot¬, values from gavage administration from the literature were used to match the route of administration in the target study. 
+
+## Data prep
+```{r}
+anon_data <- data.frame(dose_mg_kg = c(0.5, 10, 50, 0.5, 10, 50),
+                        route = "Intragastric",
+                        chem = "PFHPA",
+                        sex = c("M", "M", "M", "F","F", "F"),
+                        species = "Mouse",
+                        tau_day = 1
+                        )
+
+anon_data
+```
+## Derivation
+An illustrated example is provided below for the lowest administered dose in male mice (i.e., 0.5 mg/kg-body weight).
+
+```{r}
+#join 90-day anon data to TK data for wide manipulation
+#Css_df <- left_join(Fujii, anon_data, by = c("route", "chem", "sex", "species"))
+
+# add in standard deviation values calculated for F
+F_df2 <- data.frame("chem" = "PFHPA", 
+                   "sex" = c("M", "F"),
+                  # F_frac_deterministic = c(F_IG_male, F_IG_female),
+                  variable = "F_frac_deterministic",
+                  sd = c(sd_F_male, sd_F_female))
+
+Fujii <- left_join(Fujii, F_df2, by =c("chem", "sex", "variable")) %>% 
+  mutate(sd = ifelse(!is.na(sd.x), sd.x, sd.y)) %>% 
+  select(-sd.x, -sd.y)
+
+
+# Fujii_anon <- rbind(Fujii, 
+#           anon_data %>% pivot_longer(
+#             cols = c(dose_mg_kg, tau_day),
+#             names_to = "variable") %>% 
+#         mutate(sd = NA,
+#                units = NA))
+
+
+Fujii_wide <- Fujii %>%
+  filter(chem == "PFHPA",
+         route == "Intragastric",
+         variable != "total clearance_ml_kgxday") %>% 
+  select(sex, variable, value, sd) %>% 
+  pivot_wider(names_from = variable,
+                      values_from = c(value, sd)) %>% 
+  rename("value_AUC_t_24hr_IG" = "value_AUC_t_24hr",
+         "sd_AUC_t_24hr_IG" = "sd_AUC_t_24hr")
+
+Fujii_wide_AUC_IV <- Fujii %>%
+  filter(chem == "PFHPA",
+         route == "Intravenous",
+         variable == "AUC_t_24hr") %>% 
+  select(sex, variable, value, sd) %>% 
+  pivot_wider(names_from = variable,
+                      values_from = c(value, sd)) %>% 
+  rename("value_AUC_t_24hr_IV" = "value_AUC_t_24hr",
+         "sd_AUC_t_24hr_IV" = "sd_AUC_t_24hr")
+
+
+Fujii_anon_wide <- anon_data %>% 
+  left_join(Fujii_wide,by = c("sex")) %>% 
+  left_join(Fujii_wide_AUC_IV,by = c("sex")) 
+
+  #NON-STOCHASTIC calculation
+Css_df_det <-  Fujii_anon_wide %>%  
+  mutate(Css_mg_L = CssFnx(
+                            dose_mg_kg = dose_mg_kg,
+                           ClTot_L_kg_day = value_clearance_renal,
+                           F_frac = value_F_frac_deterministic,
+                           tau_day = tau_day)) %>% 
+  # propagate uncertainty for Css
+                          mutate(Css_sd = sd_FFnx(
+                            F_IG = Css_mg_L,
+                            sd_IG = sd_clearance_renal,
+                            AUC_IG = value_clearance_renal,
+                            sd_IV = sd_F_frac_deterministic,
+                            AUC_IV = value_F_frac_deterministic
+                            ))
+
+
+
+Css_df_det %>% 
+  select(sex, dose_mg_kg,Css_mg_L, Css_sd, value_clearance_renal, sd_clearance_renal, value_F_frac_deterministic, sd_F_frac_deterministic ) %>% 
+  drop_na(Css_mg_L)
+```
+Save clearance data to aux dataset for use in other scripts
+```{r}
+clearance_fujii <- Fujii %>% 
+  filter(variable %in% c("clearance_renal", "t1_2_hr", "total clearance_L_kgxday"),
+         chem == "PFHPA") %>% 
+  mutate(pubmed_id = "25422127",
+         authors = "Fujii"
+         )
+
+clearance_fujii
+
+write.csv(clearance_fujii,
+          file = "data_output/clearance_fujii.csv"
+           )
+```
+
+# Comparison of Clearance values in Fujii et al. (2015) to other studies
+## Data prep
+```{r}
+tk_pfas %>% 
+  mutate(standard_endpoint = as.factor(standard_endpoint)) %>% 
+  filter(standard_endpoint %in% c("CL", "CL_ren"),
+         species_name == "Mouse") %>% 
+  group_by(chem, authors) %>% 
+  summarize(CL = mean(standard_value)) %>% 
+  ungroup()
+```
+
+
+#Monte Carlo
+## Setup
+To propagate uncertainties of this assessment, a probabilistic approach is employed using Monte Carlo.
+```{r}
+library(purrr)
+
+set.seed(1234)
+# define numbe r of simulations
+n_sim <- 1e4
+
+
+logNormalfnx <- function(m,std){
+    y = 1+std^2/m^2
+    mu = log(m/sqrt(y))
+    sigma = sqrt(log(y))
+    
+    logNormal <- list(mu,sigma)
+
+    return(logNormal)
+}
+
+# functions for computing lognormal params from mu and sigma
+mu_logNormal_function <- function(mu, sigma){
+  mu_logNormal <- log(mu^2 / sqrt(sigma^2 + mu^2))
+  mu_logNormal
+}
+
+sigma_logNormal_function <- function(mu, sigma){
+  sigma_logNormal <- sqrt(log(1 + (sigma^2 / mu^2)))
+  sigma_logNormal
+}
+```
+
+## MC Function
+```{r}
+## generate distribution of values based on mean and SD
+# Monte Carlo function that includes bioavailable fraction
+monte_carlo_F <- function(df, n_sim) {
+  simulations <- map_dfr(1:n_sim, function(i) {
+    F_df <- df %>% 
+      distinct(sex, chem, 
+               value_AUC_t_24hr_IG, sd_AUC_t_24hr_IG,
+               value_AUC_t_24hr_IV, sd_AUC_t_24hr_IV) %>% 
+      mutate(
+       # Calculate meanlog and sdlog
+        mean_AUC_IG = mu_logNormal_function(value_AUC_t_24hr_IG, sd_AUC_t_24hr_IG),
+        sigma_AUC_IG = sigma_logNormal_function(value_AUC_t_24hr_IG, sd_AUC_t_24hr_IG),
+        mean_AUC_IV = mu_logNormal_function(value_AUC_t_24hr_IV, sd_AUC_t_24hr_IV),
+        sigma_AUC_IV = sigma_logNormal_function(value_AUC_t_24hr_IV, sd_AUC_t_24hr_IV)
+      ) %>% 
+      mutate(
+      IG_sim = rlnorm(n(), mean_AUC_IG, sigma_AUC_IG),
+      IV_sim = rlnorm(n(),  mean_AUC_IV, sigma_AUC_IV),
+      F_sim = IG_sim / (IV_sim * 10)) 
+    
+    df %>%
+      left_join(F_df, by = c("sex", "chem")) %>% 
+      mutate(
+         meanlog_clearance_renal = mu_logNormal_function(value_clearance_renal, sd_clearance_renal),
+        sdlog_clearance_renal = sigma_logNormal_function(value_clearance_renal, sd_clearance_renal),
+        #simulate renal clearance using log-normal distribution
+        Clrenal_L_kg_day_sim = rlnorm(n(),meanlog_clearance_renal,sdlog_clearance_renal),
+        Css_mg_L = CssFnx(dose_mg_kg = dose_mg_kg,
+                           ClTot_L_kg_day = Clrenal_L_kg_day_sim,
+                           F_frac = F_sim,
+                           tau_day = tau_day)
+      ) %>%
+    #  filter(F_sim <= 1.000) %>% 
+      select(chem, sex, dose_mg_kg, Css_mg_L, 
+             Clrenal_L_kg_day_sim, F_sim, IV_sim, IG_sim) %>%
+      mutate(simulation = i) %>% 
+    filter(Css_mg_L > 0)
+  })
+  
+  simulations
+}
+
+
+# Monte Carlo function that excludes bioavailable fraction
+monte_carlo_noF <- function(df, n_sim) {
+  simulations <- map_dfr(1:n_sim, function(i) {
+    F_df <- df %>% 
+      # distinct(sex, chem, 
+      #          value_Intravenous, sd_Intravenous,
+      #          value_Intragastric, sd_Intragastric) %>% 
+       mutate(
+      # IV_sim = rnorm(n(), value_Intravenous, sd_Intravenous),
+      #   IG_sim = rnorm(n(), value_Intragastric, sd_Intragastric),
+        F_sim = runif(n(), 1, 1)) %>%  #uniform distribution of 1s
+      distinct(sex, chem, F_sim)
+    
+    
+  df %>%
+      left_join(F_df, by = c("sex", "chem")) %>% 
+      mutate(
+        # Calculate meanlog and sdlog
+        meanlog_clearance_renal = mu_logNormal_function(value_clearance_renal, sd_clearance_renal),
+        sdlog_clearance_renal = sigma_logNormal_function(value_clearance_renal, sd_clearance_renal),
+        #simulate renal clearance using log-normal distribution
+        Clrenal_L_kg_day_sim = rlnorm(n(),meanlog_clearance_renal,sdlog_clearance_renal),
+        #estimate Css
+        Css_mg_L = CssFnx(dose_mg_kg = dose_mg_kg,
+                           ClTot_L_kg_day = Clrenal_L_kg_day_sim,
+                           F_frac = F_sim,
+                           tau_day = tau_day)
+      ) %>%
+    #  filter(F_sim <= 1.000) %>% 
+      select(chem, sex, dose_mg_kg, Css_mg_L, 
+             Clrenal_L_kg_day_sim, F_sim) %>%
+      mutate(simulation = i) #%>% 
+  #  filter(Css_mg_L > 0)
+  })
+  
+  simulations
+}
+```
+## Run MC
+### F variability
+```{r}
+# Run the Monte Carlo simulation
+monte_carlo_F_results <- monte_carlo_F(Fujii_anon_wide, n_sim)
+
+saveRDS(monte_carlo_F_results , 
+        "../../output/data/dose_to_serum/monte_carlo_F_results.rds")
+
+skimr::skim(monte_carlo_F_results)
+```
+### No F variability
+```{r}
+monte_carlo_noF_results <- monte_carlo_noF(Fujii_anon_wide, n_sim)
+
+# saveRDS(monte_carlo_noF_results , 
+#         "data_output/monte_carlo_noF_results.rds")
+
+skimr::skim(monte_carlo_noF_results)
+```
+## Summary
+```{r}
+# Function to calculate 95% confidence interval
+ci_95 <- function(x) {
+  n <- length(x)
+  se <- sd(x) / sqrt(n)
+  error_margin <- qnorm(0.975) * se
+  mean_x <- mean(x)
+  c(lower = mean_x - error_margin, upper = mean_x + error_margin)
+}
+
+# Calculate summary statistics, including IQR and 95% CI
+summary_function <- function(df) {
+  
+summary <-  df %>% 
+  drop_na(Css_mg_L) %>% 
+  group_by(sex, dose_mg_kg) %>%
+  dplyr::summarize(
+    median_Css_mg_L = median(Css_mg_L),
+    mean_Css_mg_L = mean(Css_mg_L),
+    sd_Css_mg_L = sd(Css_mg_L),
+       CI_05_Css_mg_L = ci_95(Css_mg_L)[1],
+    CI_95_Css_mg_L = ci_95(Css_mg_L)[2],
+    IQR_Css_mg_L = IQR(Css_mg_L),
+ 
+    median_F = median(F_sim),
+    mean_F = mean(F_sim),
+    sd_F = sd(F_sim),
+    IQR_F = IQR(F_sim),
+    CI_05_F = ci_95(F_sim)[1],
+    CI_95_F = ci_95(F_sim)[2],
+    median_Clrenal = median(Clrenal_L_kg_day_sim),
+    mean_Clrenal = mean(Clrenal_L_kg_day_sim),
+    sd_Clrenal = sd(Clrenal_L_kg_day_sim),
+    IQR_Clrenal = IQR(Clrenal_L_kg_day_sim),
+    CI_05_Clrenal = ci_95(Clrenal_L_kg_day_sim)[1],
+    CI_95_Clrenal = ci_95(Clrenal_L_kg_day_sim)[2],
+  #  median_IV_AUC = median(IV_sim),
+ #   mean_IV_AUC = mean(IV_sim),
+ #   sd_IV_AUC = sd(IV_sim),
+  #  IQR_IV_AUC = IQR(IV_sim),
+  #  CI_95_IV_AUC_lower = ci_95(IV_sim)[1],
+  #  CI_95_IV_AUC_upper = ci_95(IV_sim)[2],
+  #  median_IG_AUC = median(IG_sim),
+   # mean_IG_AUC = mean(IG_sim),
+  #  sd_IG_AUC = sd(IG_sim),
+ #   IQR_IG_AUC = IQR(IG_sim),
+  #  CI_95_IG_AUC_lower = ci_95(IG_sim)[1],
+   # CI_95_IG_AUC_upper = ci_95(IG_sim)[2],
+    .groups = 'drop')
+    
+    summary
+}
+
+summaryF_results <- summary_function(monte_carlo_F_results)
+
+# write_csv(summaryF_results, 
+#         "data_output/summaryF_results.csv")
+
+summaryF_results
+```
+#### Histogram
+```{r}
+# Modify the dose_mg_kg labels to include units
+monte_carlo_F_hist <-  monte_carlo_F_results %>%
+   mutate(dose_mg_kg = factor(dose_mg_kg, 
+                             levels = unique(dose_mg_kg),
+                             labels = paste0("Gavage dose = ",unique(dose_mg_kg), " mg/kg"))) %>% 
+  drop_na(Css_mg_L) %>%
+  ggplot(aes(x = Css_mg_L, fill = sex)) +
+  geom_histogram(alpha = 0.7, bins = 1000) +
+  cols4all::scale_fill_discrete_c4a_cat("wes.asteroid_city3") +
+  scale_x_log10(labels = scales::comma_format(),
+                limits = c(0.1, 10000)) +
+  ylab("Relative Abundance") +
+  xlab("Estimated Css (mg/L)") +
+  facet_wrap(~dose_mg_kg, ncol = 1) +
+  theme_minimal(base_size = 15) +
+  theme(
+    axis.text.y = element_blank(),
+    legend.position = c(0.9, 0.9)
+  )
+
+# ggsave("figures/monte_carlo_F_hist.jpg",
+#        monte_carlo_F_hist,
+#         width = 7, height = 5,
+#        dpi = 300)
+
+monte_carlo_F_hist
+```
+
+### F = 1 
+```{r}
+summaryNoF_results <- summary_function(monte_carlo_noF_results)
+
+# write_csv(summaryNoF_results, 
+#         "data_output/summaryNoF_results.csv")
+
+summaryNoF_results %>% 
+   mutate(across(where(is.numeric), ~ signif(., 3)))
+```
+#### Histogram
+```{r}
+# Modify the dose_mg_kg labels to include units
+monte_carlo_noF_hist <-  monte_carlo_noF_results %>%
+   mutate(dose_mg_kg = factor(dose_mg_kg, 
+                             levels = unique(dose_mg_kg),
+                             labels = paste0("Gavage dose = ",unique(dose_mg_kg), " mg/kg"))) %>% 
+  drop_na(Css_mg_L) %>%
+  ggplot(aes(x = Css_mg_L, fill = sex)) +
+  geom_histogram(alpha = 0.7, bins = 1000) +
+  cols4all::scale_fill_discrete_c4a_cat("met.egypt") +
+  scale_x_log10(labels = scales::comma_format(),
+                limits = c(0.1, 10000)) +
+  ylab("Relative Abundance") +
+  xlab("Estimated Css (mg/L)") +
+  facet_wrap(~dose_mg_kg, ncol = 1) +
+  theme_minimal(base_size = 15) +
+  theme(
+    axis.text.y = element_blank(),
+    legend.position = c(0.9, 0.9)
+  )
+
+# ggsave("figures/monte_carlo_noF_hist.jpg",
+#        monte_carlo_noF_hist,
+#         width = 7, height = 5,
+#        dpi = 300)
+
+monte_carlo_noF_hist
+```
+
+```{r}
+library(ggpubr)
+
+MC_both_hist <- ggarrange(monte_carlo_F_hist,
+                          monte_carlo_noF_hist,
+                          # common.legend = "false",
+                          labels = c("A", "B"),
+                          ncol = 2)
+
+# ggsave("figures/MC_both_hist.jpg",
+#        MC_both_hist,
+#         width = 7, height = 5,
+#        dpi = 300)
+
+
+MC_both_hist
+```
+
+## Clearance variability
+```{r}
+renal_clearance_hist <-  monte_carlo_noF_results %>%
+  drop_na(Css_mg_L) %>%
+  ggplot(aes(x = Clrenal_L_kg_day_sim, fill = sex)) +
+  geom_histogram(alpha = 0.7, bins = 1000) +
+  cols4all::scale_fill_discrete_c4a_cat("met.egypt") +
+  scale_x_log10(labels = scales::comma_format(),
+              #  limits = c(0.1, 10000)
+              ) +
+  ylab("Relative Abundance") +
+  xlab("Renal Clearance Distribution (L/kg-day)") +
+  facet_wrap(~dose_mg_kg, ncol = 1) +
+  theme_minimal(base_size = 15) +
+  theme(
+    axis.text.y = element_blank(),
+    legend.position = c(0.9, 0.9)
+  )
+
+# ggsave("figures/renal_clearance_hist.jpg",
+#        renal_clearance_hist,
+#         width = 7, height = 5,
+#        dpi = 300)
+
+renal_clearance_hist
+```

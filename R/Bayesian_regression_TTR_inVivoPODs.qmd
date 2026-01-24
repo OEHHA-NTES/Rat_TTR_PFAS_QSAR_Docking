@@ -1,0 +1,967 @@
+---
+title: "Bayesian Regression of TTR Binding Energy vs. In Vivo PODs"
+format: html
+---
+# Setup
+## Libraries
+```{r}
+library(tidyverse)
+library(cols4all)
+library(ggpmisc)
+library(ggpubr)
+library(rstanarm)
+library(bayesplot)
+library(brms)
+library(dplyr)
+library(broom)
+library(purrr)
+library(scales)
+library(writexl)
+```
+
+## Data
+```{r}
+#import dataset from Heather containing matched BMD and Binding Energy Data
+df <- readxl::read_excel("data_input/Thyroid_dataset_1.22.2025.xlsx",
+                         sheet = "Condensed") |> 
+  mutate(across(contains("BMD"), as.numeric),
+         across(c(Type, Species, Sex, Endpoint, `Endpoint type`, `Dose metric`, Compound), as.factor))
+
+binding <- readxl::read_excel("data_input/Thyroid_dataset_1.22.2025.xlsx",
+                         sheet = "binding") %>% 
+  rename(Compound = PFAS) %>% 
+  select(Compound, contains("binding"), contains("error"))
+
+df <- df %>% 
+  left_join(binding, by = "Compound",
+            relationship = "many-to-many") %>% 
+  distinct() %>% 
+  mutate(`Rat TTR estimated average binding energy` = 
+           log10(abs(`Free binding energies (MM-PBSA)`)),
+         `Estimated binding energy average error` = 
+           log10(abs(`MM-PBSA_error`)),
+         `BMD1SD (mg/L)` = log10(`BMD (ug/mL)`),
+         `BMDL1SD (mg/L)` = log10(`BMDL (ug/mL)`),
+         `BMDU1SD (mg/L)` = log10(`BMDU (ug/mL)`),
+         `BMD1SD (uM)` = log10(`BMD (uM)`),
+         `BMDL1SD (uM)` = log10(`BMDL (uM)`),
+         `BMDU1SD (uM)` = log10(`BMDU (uM)`))
+
+### import updated dataset which contains just the data that needed correcting
+# T4 model averaging PODs from Sana
+df_updates <- read_csv("data_input/T4_model_averaging_results_molar_conversions correct file.csv") %>% 
+  rename('Dataset Index' = ID) %>% 
+  # just get the uM BMDs
+  dplyr::select('Dataset Index', contains("uM")) %>% 
+  # convert to log10
+  mutate(BMD_uM = log10(BMD_uM),
+         BMDL_uM = log10(BMDL_uM),
+         BMDU_uM = log10(BMDU_uM))
+
+#join by ID
+df <- df %>% 
+  left_join(df_updates, by = 'Dataset Index') %>% 
+  #override old BMDs in uM
+  mutate(`BMD1SD (uM)` = case_when(
+    !is.na(BMD_uM) ~ BMD_uM,
+    T ~ `BMD1SD (uM)`),
+    `BMDL1SD (uM)` = case_when(
+    !is.na(BMDL_uM) ~ BMDL_uM,
+    T ~ `BMDL1SD (uM)`),
+    `BMDU1SD (uM)` = case_when(
+    !is.na(BMDU_uM) ~ BMDU_uM,
+    T ~ `BMDU1SD (uM)`)) %>% 
+  select(-c(BMD_uM, BMDL_uM, BMDU_uM))
+```
+
+# Modelling
+## Linear Regression
+```{r}
+data_subset <- df %>% 
+    filter(#Duration == 28,
+           `Dose metric` %in% c("TWA_mg_L", "Cmax_mg_L"),
+           `Endpoint type` == "Free T4"
+           ) %>% 
+  mutate(Sex = case_when(
+    Sex == "F" ~ "Female",
+    Sex == "M" ~ "Male"),
+    `Dose metric`= case_when(
+      `Dose metric` == "Cmax_mg_L" ~ "Maximum Serum Concentration",
+      `Dose metric` == "TWA_mg_L" ~ "Time-Weighted Average Serum Concentration"
+  )) %>% 
+  drop_na(c(`BMD1SD (uM)`,
+            `Rat TTR estimated average binding energy`)) %>% 
+  mutate(`Rat TTR estimated average binding energy` = as.numeric(`Rat TTR estimated average binding energy`),
+         `BMD1SD (uM)` = as.numeric(`BMD1SD (uM)`)) %>% 
+    filter(`BMD1SD (uM)` > 0) %>% 
+  rename(
+          BMD1SD_uM = `BMD1SD (uM)`,
+          Rat_TTR_binding_energy = `Rat TTR estimated average binding energy`,
+          Binding_energy_error = `Estimated binding energy average error`,
+          Dose_metric = `Dose metric`
+        ) 
+
+# Run multiple linear regressions grouped by Sex and Dose_metric
+linear_summary <- data_subset %>%
+  group_by(Sex, Dose_metric) %>%  # Group by Sex and Dose_metric
+  group_modify(~ {
+    model <- lm(BMD1SD_uM ~ Rat_TTR_binding_energy, data = .x)  # Fit the regression model
+    glance(model)  # Use broom::tidy() to extract regression results
+  })
+
+# get params
+linear_results <- data_subset %>%
+  group_by(Sex, Dose_metric) %>%  # Group by Sex and Dose_metric
+  group_modify(~ {
+    model <- lm(BMD1SD_uM ~ Rat_TTR_binding_energy, data = .x)  # Fit the regression model
+    tidy(model)  # Use broom::tidy() to extract regression results
+  })
+
+# View the regression results
+print(linear_results)
+
+linear_summary
+```
+
+### Scatterplot
+```{r}
+### Free T4 M rat 28d BMD TWA vs. Rat average TTR binding energy
+scatter_grid <- df %>% 
+    filter(Duration == 28,
+           `Dose metric` %in% c("TWA_mg_L", "Cmax_mg_L"),
+           `Endpoint type` == "Free T4"
+           ) %>% 
+  mutate(Sex = case_when(
+    Sex == "F" ~ "Female",
+    Sex == "M" ~ "Male"),
+    `Dose metric`= case_when(
+      `Dose metric` == "Cmax_mg_L" ~ "Maximum Serum Concentration",
+      `Dose metric` == "TWA_mg_L" ~ "Time-Weighted Average Serum Concentration"
+  )) %>% 
+  drop_na(c(`BMD1SD (uM)`,
+            `Rat TTR estimated average binding energy`)) %>% 
+  mutate(`Rat TTR estimated average binding energy` = as.numeric(`Rat TTR estimated average binding energy`),
+         `BMD1SD (uM)` = as.numeric(`BMD1SD (uM)`)) %>% 
+    filter(`BMD1SD (uM)` > 0) %>% 
+  ggplot(aes(x = 10 ^ `Rat TTR estimated average binding energy`, 
+             y = 10 ^ `BMD1SD (uM)`,
+             shape = Sex
+            )) +
+  geom_point(size = 3,
+             aes(color = Compound)) +
+  geom_smooth(method = "lm", formula = y ~ x, se = T,
+              color = "gray50", alpha = 0.2) + # Add regression line
+  stat_regline_equation(aes(label = ..eq.label..), formula = y ~ x, label.x.npc = 0.7, label.y.npc = 0.35) + # Add equation
+  stat_cor(aes(label = ..rr.label..), label.x.npc = 0.7, label.y.npc = 0.25, hjust = 0) + # Add R²
+  stat_cor(aes(label = ..p.label..), label.x.npc = 0.7, label.y.npc = 0.15, hjust = 0) + # Add R²
+  geom_errorbar(aes(ymin = 10 ^ `BMDL1SD (uM)`, ymax = 10 ^ `BMDU1SD (uM)`, color = Compound)) +
+  geom_errorbarh(aes(xmin = 10 ^ `Rat TTR estimated average binding energy` - 
+                       10 ^ `Estimated binding energy average error`,
+                     xmax = 10 ^ `Rat TTR estimated average binding energy` + 
+                       10 ^ `Estimated binding energy average error`,
+                     color = Compound)) +
+  scale_color_discrete_c4a_cat("carto.bold") +
+  scale_y_log10() +
+  labs(y = "Benchmark Dose (uM)") +
+  theme_minimal(base_size = 15) +
+  facet_grid(Sex ~ `Dose metric`,
+             scales = "free_y"
+            ) +
+  theme(legend.position = "bottom") +
+    guides(shape = "none" # Completely remove shape legend
+  )
+
+scatter_grid
+```
+
+## Bayesian Regression
+```{r}
+# Compute the standard error for the y-variable (BMD1SD) from the 95% CI
+data <- df %>%
+  mutate(
+    BMD1SD_SE = (`BMDU1SD (mg/L)` - `BMDL1SD (mg/L)`) / (2 * 1.96)  # SE from 95% CI
+  ) %>% 
+  filter(BMD1SD_SE < Inf)
+
+# Filter the data for a specific Dose metric (e.g., "TWA_mg_L") for demonstration
+# You can loop over all levels of `Dose metric` later
+dose_metric_level <- "TWA_mg_L"
+data_subset <- data %>% filter(`Dose metric` == dose_metric_level)
+
+# Bayesian regression model
+model <- stan_glm(
+  `BMD1SD (mg/L)` ~ `Rat TTR estimated average binding energy`,
+  data = data_subset,
+  prior = normal(0, 10),  # Weakly informative prior for slope
+  prior_intercept = normal(0, 10),  # Weakly informative prior for intercept
+  weights = 1 / BMD1SD_SE^2,  # Use inverse variance weighting
+  seed = 123
+)
+
+# Print model summary
+print(summary(model))
+```
+
+```{r}
+# Generate posterior predictive samples
+posterior_predictions <- posterior_predict(model)
+
+# Compute summary statistics for posterior predictions
+predicted_means <- apply(posterior_predictions, 2, mean)  # Mean predictions
+predicted_intervals <- apply(posterior_predictions, 2, quantile, probs = c(0.025, 0.975))  # 95% CI
+
+# Plot observed vs predicted means
+ggplot(data_subset, aes(x = `BMD1SD (mg/L)`, y = predicted_means)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = paste("Observed vs Predicted (Dose Metric:", dose_metric_level, ")"),
+    x = "Observed BMD1SD (mg/L)",
+    y = "Predicted Mean BMD1SD (mg/L)"
+  ) +
+  theme_minimal()
+
+# Residuals: Observed - Predicted
+residuals <- data_subset$`BMD1SD (mg/L)` - predicted_means
+
+# Plot residuals
+ggplot(data.frame(residuals = residuals), aes(x = residuals)) +
+  geom_histogram(bins = 10, fill = "blue", alpha = 0.7) +
+  labs(
+    title = paste("Residuals Distribution (Dose Metric:", dose_metric_level, ")"),
+    x = "Residuals (Observed - Predicted)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# Posterior predictive check: Overlay observed data with posterior predictive distributions
+ppc_dens_overlay(
+  y = data_subset$`BMD1SD (mg/L)`,
+  yrep = posterior_predictions
+) +
+  labs(
+    title = paste("Posterior Predictive Check (Dose Metric:", dose_metric_level, ")"),
+    x = "BMD1SD (mg/L)",
+    y = "Density"
+  )
+
+# Loop over all Dose metric levels (optional)
+results <- list()
+for (level in levels(data$`Dose metric`)) {
+  # Filter data for the current level
+  data_subset <- data %>% filter(`Dose metric` == level)
+  
+  # Fit Bayesian regression model
+  model <- stan_glm(
+    `BMD1SD (mg/L)` ~ `Rat TTR estimated average binding energy`,
+    data = data_subset,
+    prior = normal(0, 10),
+    prior_intercept = normal(0, 10),
+    weights = 1 / BMD1SD_SE^2,
+    seed = 123
+  )
+  
+  # Generate posterior predictive samples
+  posterior_predictions <- posterior_predict(model)
+  
+  # Store results for this level
+  results[[level]] <- list(
+    model = model,
+    posterior_predictions = posterior_predictions,
+    observed = data_subset$`BMD1SD (mg/L)`
+  )
+  
+  # Posterior predictive check plot
+  print(
+    ppc_dens_overlay(
+      y = data_subset$`BMD1SD (mg/L)`,
+      yrep = posterior_predictions
+    ) +
+      labs(
+        title = paste("Posterior Predictive Check (Dose Metric:", level, ")"),
+        x = "BMD1SD (mg/L)",
+        y = "Density"
+      )
+  )
+}
+```
+
+```{r}
+# Initialize a data frame to store summary statistics for each Dose metric
+summary_stats <- data.frame(
+  `Dose metric` = character(),
+  MAE = numeric(),
+  Residual_SD = numeric(),
+  R2 = numeric(),
+  stringsAsFactors = FALSE
+)
+
+data <- data %>% 
+  filter(`Dose metric` != "AUC_mg_L") %>% 
+  droplevels()
+
+# Loop over all Dose metric levels
+for (level in levels(data$`Dose metric`)) {
+  # Filter data for the current level
+  data_subset <- data %>% filter(`Dose metric` == level,
+                                 Sex == "M",
+                                 `Endpoint type` == "Free T4",
+                                 Species == "Rat"
+                                 )
+  
+  # Fit Bayesian regression model
+  model <- stan_glm(
+    `BMD1SD (mg/L)` ~ `Rat TTR estimated average binding energy`,
+    data = data_subset,
+    prior = normal(0, 10),
+    prior_intercept = normal(0, 10),
+    weights = 1 / BMD1SD_SE^2,
+    seed = 123
+  )
+  
+  # Generate posterior predictive samples
+  posterior_predictions <- posterior_predict(model)
+  
+  # Compute mean predictions
+  predicted_means <- apply(posterior_predictions, 2, mean)
+  
+  # Compute residuals
+  residuals <- data_subset$`BMD1SD (mg/L)` - predicted_means
+  
+  # Compute summary statistics
+  mae <- mean(abs(residuals))  # Mean Absolute Error
+  residual_sd <- sd(residuals)  # Residual Standard Deviation
+  r2 <- 1 - (sum(residuals^2) / sum((data_subset$`BMD1SD (mg/L)` - mean(data_subset$`BMD1SD (mg/L)`))^2))  # R²
+  
+  # Append to summary_stats data frame
+  summary_stats <- rbind(summary_stats, data.frame(
+    `Dose metric` = level,
+    MAE = mae,
+    Residual_SD = residual_sd,
+    R2 = r2
+  ))
+}
+
+# Reshape data for plotting (if needed)
+summary_stats_long <- summary_stats %>%
+  pivot_longer(cols = c(MAE, Residual_SD, R2), names_to = "Metric", values_to = "Value") 
+
+# Reorder Dose metric by MAE in descending order
+mae_order <- summary_stats_long %>%
+  filter(Metric == "MAE") %>%  # Filter for MAE only
+  arrange(desc(Value)) %>%  # Arrange by MAE in descending order
+  pull(`Dose.metric`)  # Extract the Dose metric levels in the desired order
+
+# Update the Dose metric factor levels based on the MAE order
+summary_stats_long <- summary_stats_long %>%
+  mutate(`Dose.metric` = factor(`Dose.metric`, levels = mae_order))
+
+# Plot summary statistics with reordered Dose metric
+ggplot(summary_stats_long, aes(y = `Dose.metric`, x = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ Metric, scales = "free_x", nrow = 1) +
+  labs(
+    title = "Model Performance Summary by Dose Metric",
+    subtitle = "Male Rat T4",
+    x = "Dose Metric",
+    y = "Value"
+  ) +
+  labs(y = "Dose Metric") +
+  scale_fill_discrete_c4a_cat() +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# Initialize a data frame to store summary statistics for each Dose metric, Sex, and Endpoint Type
+summary_stats <- data.frame(
+  `Dose metric` = character(),
+  Sex = character(),
+  `Endpoint Type` = character(),
+  MAE = numeric(),
+  Residual_SD = numeric(),
+  R2 = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Filter out unwanted Dose metric levels
+data <- data %>% 
+  filter(`Dose metric` != "AUC_mg_L") %>% 
+  droplevels()
+
+# Loop over all combinations of Sex and Endpoint Type
+for (sex in unique(data$Sex)) {
+  for (endpoint in unique(data$`Endpoint type`)) {
+    # Loop over all Dose metric levels
+    for (level in levels(data$`Dose metric`)) {
+      # Filter data for the current combination of Dose metric, Sex, and Endpoint Type
+      data_subset <- data %>% filter(
+        `Dose metric` == level,
+        Sex == sex,
+        `Endpoint type` == endpoint,
+        Species == "Rat"
+      )
+      
+      # Skip if there are not enough data points to fit the model
+      if (nrow(data_subset) < 3) next
+      
+      # Fit Bayesian regression model
+      model <- stan_glm(
+        `BMD1SD (mg/L)` ~ `Rat TTR estimated average binding energy`,
+        data = data_subset,
+        prior = normal(0, 10),
+        prior_intercept = normal(0, 10),
+        weights = 1 / BMD1SD_SE^2,
+        seed = 123
+      )
+      
+      # Generate posterior predictive samples
+      posterior_predictions <- posterior_predict(model)
+      
+      # Compute mean predictions
+      predicted_means <- apply(posterior_predictions, 2, mean)
+      
+      # Compute residuals
+      residuals <- data_subset$`BMD1SD (mg/L)` - predicted_means
+      
+      # Compute summary statistics
+      mae <- mean(abs(residuals))  # Mean Absolute Error
+      residual_sd <- sd(residuals)  # Residual Standard Deviation
+      r2 <- 1 - (sum(residuals^2) / sum((data_subset$`BMD1SD (mg/L)` - mean(data_subset$`BMD1SD (mg/L)`))^2))  # R²
+      
+      # Append to summary_stats data frame
+      summary_stats <- rbind(summary_stats, data.frame(
+        `Dose metric` = level,
+        Sex = sex,
+        `Endpoint Type` = endpoint,
+        MAE = mae,
+        Residual_SD = residual_sd,
+        R2 = r2
+      ))
+    }
+  }
+}
+
+# Reshape data for plotting
+summary_stats_long <- summary_stats %>%
+  pivot_longer(cols = c(MAE, Residual_SD, R2), names_to = "Metric", values_to = "Value")
+
+# Reorder Dose metric by MAE in descending order
+mae_order <- summary_stats_long %>%
+  filter(Metric == "MAE") %>%  # Filter for MAE only
+  group_by(Endpoint.Type, Sex) %>% 
+  arrange(desc(Value)) %>%  # Arrange by MAE in descending order
+  pull(`Dose.metric`)  # Extract the Dose metric levels in the desired order
+
+# # Update the Dose metric factor levels based on the MAE order
+# summary_stats_long <- summary_stats_long %>%
+#   mutate(`Dose.metric` = factor(`Dose.metric`, levels = mae_order))
+
+
+# Plot summary statistics with reordered Dose metric
+summary_stats_long %>% 
+  filter(Metric == "MAE",
+         Dose.metric %in% c("TWA_mg_L", "Cmax_mg_L")) %>% 
+  ggplot(aes(y = `Dose.metric`, x = Value, fill = Dose.metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_grid(rows = vars(`Endpoint.Type`), cols = vars(Sex), scales = "free_x") +
+  labs(
+    title = "Model Performance Summary by Dose Metric",
+    subtitle = "Faceted by Sex and Endpoint Type",
+    x = "MAE",
+    y = "Dose Metric"
+  ) +
+  scale_x_log10() +
+  scale_fill_discrete_c4a_cat() +  # Replace with your preferred color scale
+  #theme_minimal(base_size = 15) +
+  theme_bw(base_size = 15) +
+  theme(
+    legend.position = "none",
+    #axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+
+### Incorporating Uncertainty in the X-Axis: Measurement Error Models
+
+In this analysis, we aim to account for the uncertainty in the predictor variable (`Rat TTR estimated average binding energy`) when modeling the relationship between binding energy and the response variable (`BMD1SD (mg/L)`). The uncertainty in the predictor is represented by its standard error (`Estimated binding energy average error`). Ignoring this uncertainty can lead to biased estimates of regression coefficients and overly optimistic assessments of model performance. To address this, we use a **measurement error model**.
+
+A measurement error model explicitly accounts for the fact that the observed predictor values are noisy measurements of the true underlying values. In this case:
+1. The observed predictor (`Rat TTR estimated average binding energy`) is modeled as:
+   \[
+   x_{\text{obs}} \sim \mathcal{N}(x_{\text{true}}, \sigma_x^2)
+   \]
+   where \( x_{\text{true}} \) is the true latent value of the predictor, and \( \sigma_x \) is the standard error (`Estimated binding energy average error`).
+
+2. The true latent predictor (\( x_{\text{true}} \)) is then used in the regression model:
+   \[
+   y \sim \mathcal{N}(\beta_0 + \beta_1 x_{\text{true}}, \sigma_y^2)
+   \]
+   where \( y \) is the response variable (`BMD1SD (mg/L)`), and \( \sigma_y \) is the residual standard deviation.
+
+
+#### Frequentist Linear Regression
+The following code uses frequentist linear regression to assign priors. This is the final code used in the manuscript.
+```{r}
+#### Define function to fit Bayesian model with measurement error
+fit_bayesian_model <- function(data, linear_results) {
+  # Extract the corresponding frequentist results for the current group
+  group_info <- unique(data %>% select(Sex, Dose_metric))
+  group_results <- linear_results %>%
+    filter(Sex == group_info$Sex, Dose_metric == group_info$Dose_metric)
+    
+  # Extract slope and intercept estimates and standard errors
+  slope_estimate <- group_results %>% filter(term == "Rat_TTR_binding_energy") %>% pull(estimate)
+  slope_se <- group_results %>% filter(term == "Rat_TTR_binding_energy") %>% pull(std.error)
+  intercept_estimate <- group_results %>% filter(term == "(Intercept)") %>% pull(estimate)
+  intercept_se <- group_results %>% filter(term == "(Intercept)") %>% pull(std.error)
+  
+  # Define priors based on frequentist results
+  priors <- c(
+    prior_string(paste0("normal(", slope_estimate, ", ", slope_se, ")"), class = "b"),  # Prior for slope
+    prior_string(paste0("normal(", intercept_estimate, ", ", intercept_se, ")"), class = "Intercept"),  # Prior for intercept
+    prior(cauchy(0, 2), class = "sigma")  # Prior for residual SD
+  )
+  
+  # Fit the Bayesian model
+  model <- brm(
+    bf(BMD1SD_uM | mi(BMD1SD_SE) ~ 1 + me(Rat_TTR_binding_energy, Binding_energy_error)),
+    data = data,
+    prior = priors,
+    seed = 123,
+    silent = TRUE#,
+    #moment_match = TRUE 
+  )
+
+  # Extract posterior samples for slope and intercept
+  posterior_samples <- as.data.frame(posterior_samples(model))
+  
+  # Extract posterior summary metrics
+  posterior_summary <- summary(model)$fixed
+  summary_metrics <- tibble(
+    slope_mean = posterior_summary["meRat_TTR_binding_energyBinding_energy_error", "Estimate"],
+    slope_lower = posterior_summary["meRat_TTR_binding_energyBinding_energy_error", "l-95% CI"],
+    slope_upper = posterior_summary["meRat_TTR_binding_energyBinding_energy_error", "u-95% CI"],
+    intercept_mean = posterior_summary["Intercept", "Estimate"],
+    intercept_lower = posterior_summary["Intercept", "l-95% CI"],
+    intercept_upper = posterior_summary["Intercept", "u-95% CI"]
+  )
+  
+  # Calculate model performance metrics
+  # 1. RMSE and MAE
+  predictions <- posterior_predict(model)
+  epredictions <- posterior_epred(model)
+  residuals <- data$BMD1SD_uM - rowMeans(predictions)
+  rmse <- sqrt(mean(residuals^2))  # Root Mean Squared Error
+  mae <- mean(abs(residuals))  # Mean Absolute Error
+  
+  # 2. R-squared
+  r_squared <- bayes_R2(model) 
+  
+  # 3. WAIC and LOO
+  waic <- waic(model)$estimates["waic", "Estimate"]
+  loo <- loo(model)$estimates["looic", "Estimate"]
+  
+  # Combine performance metrics
+  performance_metrics <- tibble(
+    RMSE = rmse,
+    MAE = mae,
+    R_squared = r_squared[,1],
+    R_squared_SE = r_squared[,2], #standard error of R^2
+    WAIC = waic,
+    LOO = loo,
+    Dose_metric = unique(data$Dose_metric),
+    Sex = unique(data$Sex)
+  )
+  
+  # Reshape posterior predictions
+  # Expand the dataset to match the number of posterior samples
+  n_samples <- nrow(epredictions)  # Number of posterior samples
+  expanded_data <- data[rep(1:nrow(data), each = n_samples), ]  # Repeat rows of the dataset
+  expanded_data$sample <- rep(1:n_samples, times = nrow(data))  # Add sample index
+  
+  # Reshape predictions into a long format
+  posterior_predictions <- tibble(
+    Rat_TTR_binding_energy = expanded_data$Rat_TTR_binding_energy,
+    BMD1SD_uM = expanded_data$BMD1SD_uM,
+    Dose_metric = expanded_data$Dose_metric,
+    Sex = expanded_data$Sex,
+    sample = expanded_data$sample,
+    y_pred = as.vector(t(epredictions))  # Flatten the matrix of predictions
+  ) %>%
+    mutate(y_pred_log10 = log10(y_pred))  # Add log10-transformed predictions
+  
+  # Add grouping variables (Dose_metric and Sex) to both outputs
+  posterior_samples <- posterior_samples %>%
+    mutate(
+      Dose_metric = unique(data$Dose_metric),
+      Sex = unique(data$Sex)
+    )
+  
+  summary_metrics <- summary_metrics %>%
+    mutate(
+      Dose_metric = unique(data$Dose_metric),
+      Sex = unique(data$Sex)
+    )
+  
+  # Return posterior samples, summary metrics, predictions, and performance metrics
+  list(
+    posterior_samples = posterior_samples,
+    summary_metrics = summary_metrics,
+    posterior_predictions = posterior_predictions,
+    performance_metrics = performance_metrics
+  )
+}
+```
+
+```{r}
+# Prepare data for Bayesian modeling
+data <- df %>%
+  mutate(`Dose metric` = case_when(
+    `Dose metric` == "Cmax_mg_L" ~ "Maximum Serum Concentration",
+    `Dose metric` == "TWA_mg_L" ~ "Time-Weighted Average Serum Concentration"),
+    Sex = case_when(
+      Sex == "M" ~ "Male",
+      Sex == "F" ~ "Female"
+    )) %>% 
+  filter(`Endpoint type` == "Free T4",
+         `Dose metric` %in% c("Maximum Serum Concentration", "Time-Weighted Average Serum Concentration")) %>% 
+  rename(Dose_metric = `Dose metric`,
+         BMD1SD_uM = `BMD1SD (uM)`,
+         Rat_TTR_binding_energy = `Rat TTR estimated average binding energy`,
+         Binding_energy_error = `Estimated binding energy average error`) %>% 
+  mutate(BMD1SD_SE = (`BMDU1SD (mg/L)` - `BMDL1SD (mg/L)`) / (2 * 1.96)) %>% 
+  droplevels()
+
+# Run Bayesian models for each group
+results <- data %>% 
+  group_by(Sex, Dose_metric) %>%
+  group_split() %>%
+  purrr::map(~ fit_bayesian_model(.x, linear_results))
+```
+
+```{r}
+# Combine posterior samples, summary metrics, and performance metrics
+posterior_samples_all <- purrr::map_dfr(results, "posterior_samples")
+summary_metrics_all <- purrr::map_dfr(results, "summary_metrics")
+posterior_predictions_all <- purrr::map_dfr(results, "posterior_predictions")
+performance_metrics_all <- purrr::map_dfr(results, "performance_metrics")
+
+# make excel spreadsheet with these dataframes and export
+write_xlsx(list(
+  posterior_samples = posterior_samples_all,
+  summary_metrics = summary_metrics_all,
+  posterior_predictions = posterior_predictions_all,
+  performance_metrics = performance_metrics_all
+), "data_output/bayesian_regression_results.xlsx")
+
+print(summary_metrics_all)
+print(performance_metrics_all)
+```
+
+
+```{r}
+# Generate posterior predictions for each group
+posterior_predictions <- posterior_samples_all %>%
+  mutate(Rat_TTR_binding_energy = meanme_meRat_TTR_binding_energy) %>% 
+  group_by(Dose_metric, Sex) %>%
+  sample_n(100) %>%
+  mutate(
+    y_pred = 10^(b_Intercept + bsp_meRat_TTR_binding_energyBinding_energy_error * Rat_TTR_binding_energy)
+  )
+
+# Create the faceted scatterplot
+ggplot(data, aes(x = 10 ^ Rat_TTR_binding_energy, y = 10 ^  BMD1SD_uM)) +
+  # Scatter points
+  geom_point(size = 3, aes(color = Compound)) +
+  
+  # Error bars for y-axis
+  geom_errorbar(aes(ymin = 10 ^ `BMDL1SD (uM)`, 
+                    ymax = 10 ^ `BMDU1SD (uM)`, color = Compound)) +
+  
+  # Error bars for x-axis
+  geom_errorbarh(aes(xmin = 10 ^ Rat_TTR_binding_energy - 10 ^ Binding_energy_error,
+                     xmax = 10 ^ Rat_TTR_binding_energy + 10 ^ Binding_energy_error,
+                     color = Compound)) +
+  
+  # Regression lines from posterior predictions
+  geom_line(
+    data = posterior_predictions_all,
+    aes(x = 10 ^ Rat_TTR_binding_energy, 
+        y = 10 ^ y_pred, 
+        group = interaction(Dose_metric, Sex)),
+    color = "blue", alpha = 0.5
+  ) +
+  
+  # Add annotations for R^2 and WAIC
+  geom_text(
+    data = performance_metrics_all,
+    aes(
+      x = -Inf, y = Inf, 
+      label = paste0(
+        "R²: ", round(R_squared, 2), "\n",
+        "WAIC: ", round(WAIC, 2)
+      )
+    ),
+    hjust = -0.1, vjust = 1.1, size = 3, color = "red", inherit.aes = FALSE
+  ) +
+  
+  # Log10 scale for y-axis
+  scale_y_log10() +
+  
+  # Facet by Sex and Dose Metric
+  facet_grid(Sex ~ Dose_metric, scales = "free_y") +
+  
+  # Labels and theme
+  labs(
+    title = "Bayesian Regression: Posterior Sampled Lines and Summary Metrics",
+    x = "Binding Energy (kcal mol^-1)",
+    y = "BMD1SD (uM)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Generate regression lines for posterior samples
+posterior_lines <- posterior_samples_all %>%
+  group_by(Dose_metric, Sex) %>%
+  sample_n(5) %>%   # Randomly sample 100 posterior draws per group
+  # Expand the posterior samples for each x value (Rat_TTR_binding_energy)
+  summarise(data = list(
+    expand.grid(
+      Rat_TTR_binding_energy = seq(min(data$Rat_TTR_binding_energy), max(data$Rat_TTR_binding_energy), length.out = 100),
+      #Rat_TTR_binding_energy = seq(min(subset$Rat_TTR_binding_energy), max(subset$Rat_TTR_binding_energy), length.out = 100),
+      b_Intercept = b_Intercept,
+      bsp_meRat_TTR_binding_energyBinding_energy_error = bsp_meRat_TTR_binding_energyBinding_energy_error
+    ) %>%
+      mutate(
+        # Calculate y values for each posterior sample
+        BMD1SD_uM = b_Intercept + bsp_meRat_TTR_binding_energyBinding_energy_error * Rat_TTR_binding_energy
+      )
+  )) %>%
+  unnest(data)
+```
+
+
+### Scatterplot of Bayesian Model
+```{r}
+# Add a column to identify trimmed error bars
+data_new <- data %>%
+  mutate(
+    trimmed_label = case_when(
+      10 ^`BMDL1SD (uM)` < 0 ~ paste0("Lower: ", scales::comma(10 ^`BMDL1SD (uM)`, 1)),
+      10 ^`BMDU1SD (uM)` > 350 ~ paste0("Upper: ", scales::comma(10 ^`BMDU1SD (uM)`, 1)),
+      TRUE ~ NA_character_  # No label if not trimmed
+    )
+  )
+
+# Create the plot
+bayesian_scatter <- ggplot(data_new, aes(x = -10 ^ Rat_TTR_binding_energy,
+                                         y = 10 ^ BMD1SD_uM)) +
+  geom_point(size = 3, aes(color = Compound)) +  # Scatterplot of data points
+  
+  # Error bars for y-axis
+  geom_errorbar(aes(ymin = 10 ^`BMDL1SD (uM)`, ymax = 10 ^`BMDU1SD (uM)`,
+                    color = Compound),
+                width = 1.5) +
+  
+  # Error bars for x-axis
+  geom_errorbarh(aes(xmin = -10 ^ Rat_TTR_binding_energy - 10 ^ Binding_energy_error,
+                     xmax = -10 ^ Rat_TTR_binding_energy + 10 ^ Binding_energy_error,
+                     color = Compound),
+                 height = 18) +
+  
+  # Add labels for trimmed error bars
+  geom_text(
+    aes(label = trimmed_label, color = Compound),
+    na.rm = TRUE,  # Ignore points without labels
+    hjust = -0.1, vjust = -0.5, size = 3,
+    show.legend = F
+  ) +
+  
+  # Add regression lines from posterior samples
+  geom_line(
+    data = posterior_lines,
+    aes(x = -10 ^ Rat_TTR_binding_energy, y = 10 ^ BMD1SD_uM,
+        group = interaction(Dose_metric, Sex)),
+    color = "blue", alpha = 0.1
+  ) +
+  
+  # Add annotations for posterior summary metrics in the upper-right corner
+  geom_text(
+    data = summary_metrics_all,
+    aes(
+      x = Inf, y = Inf, 
+      label = paste0(
+        "Slope: ", signif(slope_mean, 2), 
+        " [", signif(slope_lower, 2), ", ", signif(slope_upper, 2), "]\n",
+        "Intercept: ", signif(intercept_mean, 3), 
+        " [", signif(intercept_lower, 3), ", ", signif(intercept_upper, 3), "]"
+      )
+    ),
+    hjust = 1.1, vjust = 1.8, size = 3.5, color = "black", inherit.aes = FALSE
+  ) +
+  
+  # Add annotations for R² and RMSE in the upper-right corner
+  geom_text(
+    data = performance_metrics_all,
+    aes(
+      x = Inf, y = Inf, 
+      label = paste0(
+        "R²: ", round(R_squared, 2),
+        " ± ", round(R_squared_SE, 2), "\n",
+        "RMSE: ", round(RMSE, 0), "\n",
+        "WAIC: ", scales::scientific(WAIC, 2), "\n",
+        "LOO CV: ", scales::scientific(LOO, 2)
+      )
+    ),
+    hjust = 1.1, vjust = 2., size = 3.5, color = "black", inherit.aes = FALSE
+  ) +
+  
+   # Customize the legend to show only dots with compound names
+  guides(color = guide_legend(
+    override.aes = list(
+      shape = 16,  # Use solid dots
+      size = 4,    # Adjust dot size in the legend
+      linetype = 0 # Remove lines from the legend
+    )
+  )) +
+  
+  # Use coord_cartesian to zoom in on the y-axis without trimming error bars
+  coord_cartesian(ylim = c(0, 200)) +
+  
+  # Facet by Sex and Dose Metric
+  facet_grid(Sex ~ Dose_metric, scales = "free_y") +
+  
+  # Labels and theme
+  labs(
+    title = "Bayesian Regression for BMD vs. Binding Energy",
+    subtitle = "Free T4. CMax and TWA for Males and Females plotted separately.",
+    x = expression("Rat Transthyretin Binding Energy (kcal mol"^-1*")"),
+    y = expression(italic("In vivo") * " Benchmark Dose (µM)")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    strip.text = element_text(face = "bold")
+  )
+
+
+bayesian_scatter
+```
+
+### Figure 9
+```{r}
+# Create a data frame for panel labels
+panel_labels <- data.frame(
+  Dose_metric = c("Maximum Serum Concentration", "Time-Weighted Average Serum Concentration"),
+  label = c("A. CMax", "B. TWA"),
+  x = -35.2,  # Left edge
+  y = Inf    # Top edge
+)
+
+
+# Create the plot
+bayesian_scatter_male <- ggplot(data_new %>% filter(Sex == "Male"),
+                                aes(x = -10 ^ Rat_TTR_binding_energy,
+                                    y = 10 ^ BMD1SD_uM)) +
+  geom_point(size = 3, aes(color = Compound)) +  # Scatterplot of data points
+  
+  # Add panel labels
+  geom_text(
+    data = panel_labels,
+    aes(x = x, y = y, label = label),
+    hjust = -0.5,  # Slightly inside the left edge
+    vjust = 1.5,   # Slightly below the top edge
+    size = 6,      # Large, bold text
+    fontface = "bold",
+    color = "black",
+    inherit.aes = FALSE
+  ) +
+
+  # Error bars for y-axis
+  geom_errorbar(aes(ymin = 10 ^ `BMDL1SD (uM)`,
+                    ymax = 10 ^ `BMDU1SD (uM)`,
+                    color = Compound),
+                width = 1.5) +
+
+  # Error bars for x-axis
+  geom_errorbarh(aes(xmin = -10 ^ Rat_TTR_binding_energy - 10 ^ Binding_energy_error,
+                     xmax = -10 ^ Rat_TTR_binding_energy + 10 ^ Binding_energy_error,
+                     color = Compound),
+                 height = 18) +
+
+  # Add labels for trimmed error bars
+  geom_text(
+    aes(label = trimmed_label, color = Compound),
+    na.rm = TRUE,  # Ignore points without labels
+    hjust = -0.1, vjust = -5, size = 5.5,
+    show.legend = F
+  ) +
+
+  # Add regression lines from posterior samples
+  geom_line(
+    data = posterior_lines %>% filter(Sex == "Male"),
+    aes(x = -10 ^ Rat_TTR_binding_energy,
+        y = 10 ^ BMD1SD_uM,
+        group = interaction(Dose_metric, Sex)),
+    color = "blue", alpha = 0.1
+  ) +
+
+
+  # Add annotations for R² and RMSE in the upper-right corner
+  geom_text(
+    data = performance_metrics_all  %>% filter(Sex == "Male"),
+    aes(
+      x = -Inf, y = Inf,
+      label = paste0(
+        "R²: ", round(R_squared, 2),
+        " ± ", round(R_squared_SE, 2), "\n",
+        " RMSE: ", round(RMSE, 0), "\n",
+        "WAIC: ", scales::scientific(WAIC, 2), "\n",
+        "LOO CV: ", scales::scientific(LOO, 2)
+      )
+    ),
+    hjust = -0.1, vjust = 1.3, size = 6, color = "black", inherit.aes = FALSE
+  ) +
+
+   # Customize the legend to show only dots with compound names
+  guides(color = guide_legend(
+    override.aes = list(
+      shape = 16,  # Use solid dots
+      size = 4,    # Adjust dot size in the legend
+      linetype = 0 # Remove lines from the legend
+    )
+  )) +
+
+  # Use coord_cartesian to zoom in on the y-axis without trimming error bars
+  coord_cartesian(ylim = c(0, 200), xlim = c(-32,0)) +
+
+  # Facet by Sex and Dose Metric
+  facet_wrap(~Dose_metric, scales = "free_y",
+             nrow = 2) +
+
+  # Labels and theme
+  labs(
+    x = expression("Rat Transthyretin Binding Energy (kcal mol"^-1*")"),
+    y = expression(italic("In vivo") * " Benchmark Dose (µM)")
+  ) +
+  theme_minimal(base_size = 18) +
+  theme(
+    #plot.title = element_text(hjust = 0.5),
+    plot.title = element_blank(),
+    plot.subtitle = element_text(hjust = 0.5),
+    strip.text = element_blank(),
+    legend.position = "right"
+  )
+
+ggsave("figures/bayesian_scatter_male.jpg",
+       bayesian_scatter_male,
+        width = 9, height = 9,
+       dpi = 300)
+
+bayesian_scatter_male
+```

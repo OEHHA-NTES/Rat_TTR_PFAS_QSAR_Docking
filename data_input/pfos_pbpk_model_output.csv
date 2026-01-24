@@ -1,0 +1,6 @@
+﻿Study,route,chem,species_name,strain,sex,dose_letter,Dose_mg_kg_d,Exposure_duration_hr,Cmax,AUC,TWA,model_used,serum_measured_hr,time,PBPK_model_conc,concentration
+NTP 2019 28 day study,Intragastric,PFOS,Rat,Sprague-Dawley,M,A,0.312,672,13.33,209.6,7.485,PBPK,696,696,12.52,12.52
+NTP 2019 28 day study,Intragastric,PFOS,Rat,Sprague-Dawley,M,B,0.625,672,26.71,419.8,14.99,PBPK,696,696,25.09,25.09
+NTP 2019 28 day study,Intragastric,PFOS,Rat,Sprague-Dawley,M,C,1.25,672,53.41,839.6,29.99,PBPK,696,696,50.17,50.17
+NTP 2019 28 day study,Intragastric,PFOS,Rat,Sprague-Dawley,M,D,2.5,672,106.82,1679.2,59.98,PBPK,696,696,100.34,100.34
+NTP 2019 28 day study,Intragastric,PFOS,Rat,Sprague-Dawley,M,E,5,672,213.64,3358.4,119.96,PBPK,696,696,200.68,200.68
