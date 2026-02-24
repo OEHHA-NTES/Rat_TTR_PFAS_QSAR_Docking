@@ -2778,10 +2778,10 @@ model_serum_comparison <- serum_comparison %>%
   facet_wrap(~chem)
 
 
-# ggsave( "figures/model_serum_comparison.jpg",
-#         model_serum_comparison,
-#         width = 12.7, height = 7,
-#        dpi = 300)
+ggsave( "../figures/model_serum_comparison.jpg",
+        model_serum_comparison,
+        width = 12.7, height = 7,
+       dpi = 300)
 
 model_serum_comparison
 ```
@@ -2853,70 +2853,85 @@ e will determine which model is preferable overall for PFBA using a
 statistical test
 
 ```{r}
-library(caret)  # For RMSE and MAE
+library(dplyr)
+library(caret)
 
-# Group data by chem, species_name, and sex
 model_compare_metrics <- serum_comparison %>%
-  filter(dose_letter != "Zero") %>% 
+  filter(dose_letter != "Zero") %>%
   group_by(chem, species_name, sex, route, model_used) %>%
   summarise(
-    # Model 1 metrics
-    RMSE_simple_model = RMSE(Measured_serum, simple_model_conc, na.rm = TRUE),
-    MAE_simple_model = MAE(Measured_serum, simple_model_conc, na.rm = TRUE),
-    R2_simple_model = if (sum(!is.na(Measured_serum) & !is.na(simple_model_conc)) > 1) {
-      R2(Measured_serum, simple_model_conc, na.rm = TRUE)
-    } else {
-      NA_real_
-    },
-    
-    # Model 2 metrics
-    RMSE_full_model = RMSE(Measured_serum, full_model_conc, na.rm = TRUE),
-    MAE_full_model = MAE(Measured_serum, full_model_conc, na.rm = TRUE),
-    R2_full_model = if (sum(!is.na(Measured_serum) & !is.na(full_model_conc)) > 1) {
-      R2(Measured_serum, full_model_conc, na.rm = TRUE)
-    } else {
-      NA_real_
-    },
-    
-    # Model 3 metrics
+    RMSE_simple_model    = RMSE(Measured_serum, simple_model_conc, na.rm = TRUE),
+    MAE_simple_model     = MAE(Measured_serum, simple_model_conc, na.rm = TRUE),
+    R2_simple_model      = if (sum(!is.na(Measured_serum) & !is.na(simple_model_conc)) > 1)
+      R2(Measured_serum, simple_model_conc, na.rm = TRUE) else NA_real_,
+
+    RMSE_full_model      = RMSE(Measured_serum, full_model_conc, na.rm = TRUE),
+    MAE_full_model       = MAE(Measured_serum, full_model_conc, na.rm = TRUE),
+    R2_full_model        = if (sum(!is.na(Measured_serum) & !is.na(full_model_conc)) > 1)
+      R2(Measured_serum, full_model_conc, na.rm = TRUE) else NA_real_,
+
     RMSE_two_phase_model = RMSE(Measured_serum, two_phase_conc, na.rm = TRUE),
-    MAE_two_phase_model = MAE(Measured_serum, two_phase_conc, na.rm = TRUE),
-    R2_two_phase_model = if (sum(!is.na(Measured_serum) & !is.na(two_phase_conc)) > 1) {
-      R2(Measured_serum, two_phase_conc, na.rm = TRUE)
-    } else {
-      NA_real_
-    },
-    
-    # PBPK model metrics
-    RMSE_pbpk_model = RMSE(Measured_serum, PBPK_model_conc, na.rm = TRUE),
-    MAE_pbpk_model = MAE(Measured_serum, PBPK_model_conc, na.rm = TRUE),
-    R2_pbpk_model = if (sum(!is.na(Measured_serum) & !is.na(PBPK_model_conc)) > 1) {
-      R2(Measured_serum, PBPK_model_conc, na.rm = TRUE)
-    } else {
-      NA_real_
-    }
+    MAE_two_phase_model  = MAE(Measured_serum, two_phase_conc, na.rm = TRUE),
+    R2_two_phase_model   = if (sum(!is.na(Measured_serum) & !is.na(two_phase_conc)) > 1)
+      R2(Measured_serum, two_phase_conc, na.rm = TRUE) else NA_real_,
+
+    RMSE_pbpk_model      = RMSE(Measured_serum, PBPK_model_conc, na.rm = TRUE),
+    MAE_pbpk_model       = MAE(Measured_serum, PBPK_model_conc, na.rm = TRUE),
+    R2_pbpk_model        = if (sum(!is.na(Measured_serum) & !is.na(PBPK_model_conc)) > 1)
+      R2(Measured_serum, PBPK_model_conc, na.rm = TRUE) else NA_real_,
+
+    n = sum(!is.na(Measured_serum)),
+    .groups = "drop"
   ) %>%
-   mutate(
+  mutate(
     better_model = case_when(
-      # If simple model is available and has the lowest RMSE
-      !is.na(RMSE_simple_model) & RMSE_simple_model <= coalesce(RMSE_full_model, Inf) & RMSE_simple_model <= coalesce(RMSE_pbpk_model, Inf) ~ "simple",
-      # If full model is available and has the lowest RMSE
-      !is.na(RMSE_full_model) & RMSE_full_model <= coalesce(RMSE_simple_model, Inf) & RMSE_full_model <= coalesce(RMSE_pbpk_model, Inf) ~ "full",
-      # If two_phase model is available and has the lowest RMSE
-      !is.na(RMSE_two_phase_model) & RMSE_two_phase_model <= coalesce(RMSE_simple_model, Inf) & RMSE_two_phase_model <= coalesce(RMSE_pbpk_model, Inf) ~ "two_phase",
-      # If PBPK model is available and has the lowest RMSE
-      !is.na(RMSE_pbpk_model) & RMSE_pbpk_model <= coalesce(RMSE_simple_model, Inf) & RMSE_pbpk_model <= coalesce(RMSE_full_model, Inf) ~ "PBPK",
-      # If only one model is available, that model wins
-      is.na(RMSE_simple_model) & is.na(RMSE_full_model) & is.na(RMSE_pbpk_model) & !is.na(RMSE_two_phase_model) ~ "two_phase",
-      is.na(RMSE_simple_model) & is.na(RMSE_full_model) & is.na(RMSE_two_phase_model) & !is.na(RMSE_pbpk_model) ~ "PBPK",
-      is.na(RMSE_simple_model) & !is.na(RMSE_full_model) & is.na(RMSE_pbpk_model) & is.na(RMSE_two_phase_model) ~ "full",
-      !is.na(RMSE_simple_model) & is.na(RMSE_full_model) & is.na(RMSE_pbpk_model) & is.na(RMSE_two_phase_model) ~ "simple",
-      TRUE ~ "Not enough data"  # Handles cases with no models available
+      !is.na(RMSE_simple_model)    & RMSE_simple_model    <= coalesce(RMSE_full_model, Inf) &
+        RMSE_simple_model          <= coalesce(RMSE_two_phase_model, Inf) &
+        RMSE_simple_model          <= coalesce(RMSE_pbpk_model, Inf) ~ "simple",
+
+      !is.na(RMSE_full_model)      & RMSE_full_model      <= coalesce(RMSE_simple_model, Inf) &
+        RMSE_full_model            <= coalesce(RMSE_two_phase_model, Inf) &
+        RMSE_full_model            <= coalesce(RMSE_pbpk_model, Inf) ~ "full",
+
+      !is.na(RMSE_two_phase_model) & RMSE_two_phase_model <= coalesce(RMSE_simple_model, Inf) &
+        RMSE_two_phase_model       <= coalesce(RMSE_full_model, Inf) &
+        RMSE_two_phase_model       <= coalesce(RMSE_pbpk_model, Inf) ~ "two_phase",
+
+      !is.na(RMSE_pbpk_model)      & RMSE_pbpk_model      <= coalesce(RMSE_simple_model, Inf) &
+        RMSE_pbpk_model            <= coalesce(RMSE_full_model, Inf) &
+        RMSE_pbpk_model            <= coalesce(RMSE_two_phase_model, Inf) ~ "PBPK",
+
+      TRUE ~ NA_character_
     )
-  ) %>% 
-  ungroup() %>% 
-  # unclear why dupes - but need to remove
-  filter(!(chem == "PFOS" & sex == "M" & better_model == "simple")) 
+  ) %>%
+  # ---- bias computed from RAW rows using better_model ----
+  left_join(
+    serum_comparison %>%
+      filter(dose_letter != "Zero") %>%
+      mutate(
+        pred_best = case_when(
+          better_model == "simple"    ~ simple_model_conc,
+          better_model == "full"      ~ full_model_conc,
+          better_model == "two_phase" ~ two_phase_conc,
+          better_model == "PBPK"      ~ PBPK_model_conc,
+          TRUE ~ NA_real_
+        )
+      ) %>%
+      group_by(chem, species_name, sex, route, model_used, better_model) %>%
+      summarise(
+        bias_additive = mean(pred_best - Measured_serum, na.rm = TRUE),
+
+        # optional: multiplicative bias (geometric mean ratio Pred/Obs)
+        gmr_pred_over_obs = exp(mean(log(pred_best / Measured_serum),
+                                     na.rm = TRUE)),
+
+        n_bias = sum(!is.na(Measured_serum) & !is.na(pred_best)),
+        .groups = "drop"
+      ),
+    by = c("chem", "species_name", "sex", "route", "model_used", "better_model")
+  ) %>%
+  # your de-dupe patch (keep if still needed)
+  filter(!(chem == "PFOS" & sex == "M" & better_model == "simple"))
 
 
 model_compare_metrics %>% 
@@ -2961,10 +2976,10 @@ model_compare_RMSE_plot <- model_compare_metrics %>%
   theme_minimal(base_size = 15)
 
 
-# ggsave( "figures/model_compare_RMSE_plot.jpg",
-#         model_compare_RMSE_plot,
-#         width = 9, height = 5,
-#        dpi = 300)
+ggsave( "../figures/model_compare_RMSE_plot.jpg",
+        model_compare_RMSE_plot,
+        width = 9, height = 5,
+       dpi = 300)
 
 model_compare_RMSE_plot
 ```
@@ -3088,10 +3103,10 @@ rel_diff_col <- serum_comparison_summary_new %>%
 
 
 # Save the plot
-# ggsave("figures/fold_diff_col.jpg",
-#        rel_diff_col,
-#        width = 12.7, height = 7,
-#        dpi = 300)
+ggsave("../figures/fold_diff_col.jpg",
+       rel_diff_col,
+       width = 12.7, height = 7,
+       dpi = 300)
 
 rel_diff_col
 
@@ -3152,10 +3167,10 @@ serum_comparison_scatter <- serum_comparison_scatter_base +
   geom_ribbon(aes(xmin = final_concentration / 3, xmax = final_concentration * 3),
               fill = "grey80", color = "darkgrey", alpha = 0.1)
 
-# ggsave( "figures/serum_comparison_scatter.jpg",
-#         serum_comparison_scatter,
-#         width = 9, height = 5,
-#        dpi = 300)
+ggsave( "../figures/serum_comparison_scatter.jpg",
+        serum_comparison_scatter,
+        width = 9, height = 5,
+       dpi = 300)
 
 serum_comparison_scatter 
 ```
@@ -3179,6 +3194,99 @@ It seems that the NTP studies may not have actually measured the PFHXA
 values in rats 24 hr following the last dose, and may have actually
 collected immediately following administration of that last dose. We can
 test this hypothesis by focusing on those last 24 hr of the study.
+
+### Male-Only serum prediction analysis
+
+
+#### Predicted vs. Measured Serum SCatterplot for Male rats only
+```{r}
+band_df <- tibble(x = 10^seq(log10(1e-1), log10(1000), length.out = 400))
+
+lab_01_int_comma <- function(x) {
+  ifelse(
+    x < 1,
+    format(x, trim = TRUE, scientific = FALSE, nsmall = 1),   # 0.1
+    comma(x, accuracy = 1)                                     # 1, 10, 100, 1,000
+  )
+}
+
+serum_comparison_scatter_base_male <- serum_comparison %>%
+  filter(Measured_serum > 0,
+         concentration > 0,
+         sex == "M",
+         species_name == "Rat") %>% 
+  ggplot(aes(x = Measured_serum, 
+             y = final_concentration, 
+              color = chem
+         )) +
+
+  # Scatter points for each study and dose
+  # Scatter points with text for plotly hover
+  geom_point(aes(text = paste("Study:", Study, "<br>",
+                              "Chemical:", chem, "<br>",
+                              "Species:", species_name, "<br>",
+                              "Sex:", sex, "<br>",
+                              "Route:", route, "<br>",
+                              "Serum/plasma:", `Serum/plasma`, "<br>",
+                              "Dose:", Dose_mg_kg_d, "mg/kg-d", "<br>",
+                              "Measured Serum:", Measured_serum, "<br>",
+                              "Predicted Concentration:", final_concentration, "<br>",
+                              "Model Used:", better_model, "<br>",
+                              "Half-Life:", HLe_invivo, "hr", "<br>",
+                              "VD:", VDss_L_kg, "L/kg")), 
+             size = 3, alpha = 0.8) +
+  
+  # 1:1 line for comparison
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  
+  # Error bars for standard deviations (vertical and horizontal)
+  geom_errorbarh(aes(xmin = Measured_serum - Measured_serum_sd, 
+                    xmax = Measured_serum + Measured_serum_sd), 
+                width = 0.1) +
+  scale_colour_discrete_c4a_cat("cols4all.area7d", name = "Chemical") +
+  
+  # Labels and theme
+  labs(title = "Measured vs. Predicted Serum Concentrations (Male Rats)",
+       x = "Measured Serum Concentration (mg/L)",
+       y = "Predicted Serum Concentration (mg/L)") +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = c(0.2, 0.8),
+        legend.title = element_blank(),
+        # draw box around legend
+        legend.background = element_rect(fill = "white", color = "black"),
+        ) +
+  guides(color = guide_legend(ncol = 2)) +  # Arrange legend in 2 columns
+  # Log scale for x-axis
+   scale_x_log10(limits = c(1e-1, 1000), oob = scales::oob_keep,
+                 # labels in format: 1, 10, 100, 1000, etc.
+                 breaks = c(0.1, 1, 10, 100, 1000),
+                     labels = lab_01_int_comma
+                 ) +  
+   scale_y_log10(limits = c(1e-1, 1000), oob = scales::oob_keep,
+                 breaks = c(0.1, 1, 10, 100, 1000),
+                     labels = lab_01_int_comma
+                 ) +  # Log scale for y-axis
+  # text labels for 1:1 line and 1:3/3:1 lines (angled to match the slope of the lines)
+  annotate("text", x = 1.5, y = 1.5, label = "1:1", color = "gray50", size = 4, vjust = -1, angle = 33) +
+  annotate("text", x = 3, y = 1/3, label = "3:1", color = "gray50", size = 4, vjust = -1, angle = 33) +
+  annotate("text", x = 1, y = 3, label = "1:3", color = "gray50", size = 4, vjust = -1, angle = 33)
+
+serum_comparison_scatter_male <- serum_comparison_scatter_base_male +
+  # Add ribbon around 1:1 line with 3-fold variation
+    geom_ribbon(
+    data = band_df,
+    inherit.aes = FALSE,
+    aes(x = x, ymin = x/3, ymax = x*3),
+    fill = "grey80", alpha = 0.15
+  )
+
+ggsave( "../figures/serum_comparison_scatter_male.jpg",
+        serum_comparison_scatter_male,
+        width = 9, height = 5,
+       dpi = 300)
+
+serum_comparison_scatter_male
+```
 
 
 
@@ -3440,10 +3548,10 @@ con_time_plot_last96_specific <- serum_comparison_specific %>%
 
 
 
-# ggsave( "figures/con_time_plot_last96_specific.jpg",
-#         con_time_plot_last96_specific,
-#         width = 12.7, height = 7,
-#         dpi = 300)
+ggsave("../figures/con_time_plot_last96_specific.jpg",
+        con_time_plot_last96_specific,
+        width = 12.7, height = 7,
+        dpi = 300)
 
 
 con_time_plot_last96_specific
@@ -3573,10 +3681,10 @@ serum_residual_plot <- serum_comparison %>%
   theme(legend.position = "bottom")
 
 # Save the plot
-# ggsave( "figures/serum_normalized_residual_plot.jpg",
-#         serum_residual_plot,
-#         width = 12.7, height = 7,
-#         dpi = 300)
+ggsave( "../figures/serum_normalized_residual_plot.jpg",
+        serum_residual_plot,
+        width = 12.7, height = 7,
+        dpi = 300)
 
 # Show the plot
 serum_residual_plot
@@ -3859,9 +3967,9 @@ p3 <- ggplot(pk_params_filtered, aes(x = chem, y = TWA, fill = Study)) +
   common_theme
 
 # Combine the plots using patchwork and ensure the legend is at the bottom
-# combined_plot <- (p1 / p2 / p3) + 
-#   plot_layout(guides = "collect") & 
-#   theme(legend.position = "bottom", legend.justification = "center", legend.box = "horizontal")
+ # combined_plot <- (p1 / p2 / p3) + 
+ #   plot_layout(guides = "collect") + 
+ #   theme(legend.position = "bottom", legend.justification = "center", legend.box = "horizontal")
 
 # ggsave( "../../output/combined_plot.jpg",
 #         combined_plot,
@@ -3869,7 +3977,7 @@ p3 <- ggplot(pk_params_filtered, aes(x = chem, y = TWA, fill = Study)) +
 #        dpi = 300)
 # 
 # # Print the combined plot
-# combined_plot
+#combined_plot
 ```
 
 ## Compare TWA vs. Cavg (full model vs. steady-state approaches)
@@ -4581,6 +4689,50 @@ for (i in seq_along(data_frames)) {
 # Save the workbook to an Excel file
 saveWorkbook(wb, file = here("data_output/dose_to_serum_data.xlsx"), overwrite = TRUE)
 ```
+
+
+### Males-only model performance metrics for just best-fitting model
+```{r}
+simple_best_model_metrics <- model_compare_metrics %>% 
+  filter(species_name == "Rat",
+         sex == "M"
+         ) %>% 
+  mutate(R2 = case_when(
+    better_model == "full" ~ R2_full_model,
+    better_model == "simple" ~ R2_simple_model,
+    better_model == "PBPK" ~ R2_pbpk_model,
+    T ~ NA_real_
+  ),
+  RMSE = case_when(
+    better_model == "full" ~ RMSE_full_model,
+    better_model == "simple" ~ RMSE_simple_model,
+    better_model == "PBPK" ~ RMSE_pbpk_model,
+    T ~ NA_real_
+  ),
+  MAE = case_when(
+    better_model == "full" ~ MAE_full_model,
+    better_model == "simple" ~ MAE_simple_model,
+    better_model == "PBPK" ~ MAE_pbpk_model,
+    T ~ NA_real_
+  )) %>%
+  mutate(`Model Type` = case_when(
+    better_model == "full" ~ "Absorption",
+    better_model == "simple" ~ "Absorption-independent",
+    better_model == "PBPK" ~ "PBPK",
+    T ~ NA_character_
+  )) %>%
+  select(chem, `Model Type`, R2, RMSE, bias_additive, gmr_pred_over_obs) %>%
+  rename(`RMSE (mg/L)` = RMSE,
+         `Additive Bias (mg/L)` = bias_additive,
+         `Multiplicative Bias (unitless ratio)` =  gmr_pred_over_obs) %>%
+  arrange(`RMSE (mg/L)`) %>% 
+  mutate_if(is.numeric, ~signif(., 4))
+
+write.csv(simple_best_model_metrics, "../data_output/simple_best_model_metrics.csv")
+
+simple_best_model_metrics
+```
+
 
 # Theoretical model with identical dosage and exposure duration
 

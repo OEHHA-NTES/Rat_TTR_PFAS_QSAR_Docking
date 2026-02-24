@@ -1,0 +1,8 @@
+"","chem","Model Type","R2","RMSE (mg/L)","Additive Bias (mg/L)","Multiplicative Bias (unitless ratio)"
+"1","PFHXA","Absorption-independent",0.9646,2.77,-1.43,0.771
+"2","PFBA","Absorption",0.9946,44.78,-41.25,0.08022
+"3","PFOS","PBPK",0.9975,66.28,-54.53,0.5488
+"4","PFDA","Absorption-independent",0.9886,82.6,-53.73,0.4607
+"5","PFOA","Absorption",0.9248,83.65,-80.95,0.1065
+"6","PFNA","Absorption-independent",0.9999,129.5,-100.3,0.5601
+"7","PFHXS","Absorption-independent",0.8967,166.5,83.81,1.142
