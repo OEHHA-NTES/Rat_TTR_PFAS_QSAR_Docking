@@ -438,7 +438,7 @@ tk_pfas_wide <- tk_pfas_df %>%
                                   "t_steady_state_hr",
                                   # absorption pahse params
                                   "kabs",
-                                  #two-phase params (alpha and beta model)
+                                  #two_phase params (alpha and beta model)
                                   "VD2",
                                   "VDc",
                                   "k_alpha",
@@ -1318,7 +1318,7 @@ matched_labeled %>%
            Study)
 ```
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 # Assuming matched_labeled is your data frame
 matched_labeled %>% 
   distinct(chem, species_name, sex, steady_state_reach, 
@@ -2344,7 +2344,7 @@ twa_df %>%
   distinct(chem, species_name, sex,tau_hr, Dose_mg_kg_d, HLe_invivo, VDss_L_kg, VD2, VDc, k_alpha, k_beta,
            Exposure_duration_hr)
 ```
-### How many can use two-phase model?
+### How many can use two_phase model?
 ```{r}
 twa_df %>% distinct(chem, species_name, sex,
                     kabs, k_alpha, k_beta, VD2, VDc)
@@ -2382,7 +2382,7 @@ twa_df_multiple <- twa_df %>%
       tibble(
         time = time_points,
         
-        # Two-phase model (if all alpha/beta phase params are available). 
+        # two_phase model (if all alpha/beta phase params are available). 
         two_phase_conc = if (!is.na(kabs) & !is.na(k_alpha) & !is.na(k_beta) & !is.na(VD2) & !is.na(VDc)){
         map_dbl(time_points, ~ two_phase_function(D_per_dose = D_per_dose,
                                                   #alpha phase params
@@ -2398,7 +2398,7 @@ twa_df_multiple <- twa_df %>%
                                                   exposure_duration_hr = exposure_duration_hr
                                                   ))
         } else {
-          NA_real_ #if all two-phase params are not present, set to NA
+          NA_real_ #if all two_phase params are not present, set to NA
         },
         
         # Full model concentration (if kabs is available)
@@ -2736,7 +2736,7 @@ model_serum_comparison <- serum_comparison %>%
                    x = Measured_serum, xend = Measured_serum), 
                color = "gray", linetype = "solid") +
     
-  # Plot the two-phase model points in green
+  # Plot the two_phase model points in green
   geom_point(aes(y = two_phase_conc,
                  x = Measured_serum, color = "2-Compartment Model (alpha/beta)"), size = 3) +
   
@@ -2856,7 +2856,7 @@ statistical test
 library(dplyr)
 library(caret)
 
-model_compare_metrics <- serum_comparison %>%
+model_compare_metrics_intermediate <- serum_comparison %>%
   filter(dose_letter != "Zero") %>%
   group_by(chem, species_name, sex, route, model_used) %>%
   summarise(
@@ -2903,10 +2903,12 @@ model_compare_metrics <- serum_comparison %>%
 
       TRUE ~ NA_character_
     )
-  ) %>%
+  )
+
+
   # ---- bias computed from RAW rows using better_model ----
-  left_join(
-    serum_comparison %>%
+model_compare_metrics <- serum_comparison %>%
+  left_join(model_compare_metrics %>% dplyr::select(chem, species_name, sex, route, model_used, better_model), by = c("chem", "species_name", "sex", "route", "model_used")) %>% 
       filter(dose_letter != "Zero") %>%
       mutate(
         pred_best = case_when(
@@ -2927,8 +2929,8 @@ model_compare_metrics <- serum_comparison %>%
 
         n_bias = sum(!is.na(Measured_serum) & !is.na(pred_best)),
         .groups = "drop"
-      ),
-    by = c("chem", "species_name", "sex", "route", "model_used", "better_model")
+      ) %>% 
+  left_join(model_compare_metrics, by = c("chem", "species_name", "sex", "route", "model_used", "better_model")
   ) %>%
   # your de-dupe patch (keep if still needed)
   filter(!(chem == "PFOS" & sex == "M" & better_model == "simple"))
@@ -2998,7 +3000,7 @@ serum_comparison <- serum_comparison %>%
     case_when(
       better_model == "simple" ~ !is.na(simple_model_conc),  # Keep only simple model data
       better_model == "full" ~ !is.na(full_model_conc),      # Keep only full model data
-      better_model == "two-phase" ~ !is.na(two_phase_conc),      # Keep only full model data
+      better_model == "two_phase" ~ !is.na(two_phase_conc),      # Keep only full model data
       better_model == "PBPK" ~ !is.na(PBPK_model_conc), # Keep only PBPK model data
       is.na(better_model) ~ !is.na(simple_model_conc)        # If no better model, default to simple model
     )
@@ -3007,7 +3009,7 @@ serum_comparison <- serum_comparison %>%
   mutate(final_concentration = case_when(
     better_model == "simple" ~ simple_model_conc,  # Keep only simple model data
       better_model == "full" ~ full_model_conc,      # Keep only full model data
-      better_model == "two-phase" ~ two_phase_conc,      # Keep only two-phase model data
+      better_model == "two_phase" ~ two_phase_conc,      # Keep only two_phase model data
       better_model == "PBPK" ~ PBPK_model_conc)) %>%  # Keep only PBPK model data))
   mutate(conc_meas_ratio = final_concentration / Measured_serum)
 ```
@@ -3812,7 +3814,7 @@ pk_params <- twa_df_multiple %>%
     mutate(final_concentration = case_when(
     better_model == "simple" ~ simple_model_conc,  # Keep only simple model data
       better_model == "full" ~ full_model_conc,      # Keep only full model data
-    better_model == "two-phase" ~ two_phase_conc#,      # Keep only full model data
+    better_model == "two_phase" ~ two_phase_conc#,      # Keep only full model data
       #better_model == "PBPK" ~ PBPK_model_conc
     )
     ) %>%  # Keep only PBPK model data))
@@ -4075,7 +4077,7 @@ pk_params_model_compare <- twa_df_multiple %>%
   group_by(Study, chem, sex, species_name, strain, route, model_used,
            Exposure_duration_hr, Dose_mg_kg_d, dose_letter) %>%
   summarise(
-    #two-phase
+    #two_phase
      Cmax_two_phase = max(two_phase_conc, na.rm = TRUE),  # Maximum concentration
     AUC_two_phase = calculate_auc(time / 24, two_phase_conc),  # AUC using trapezoidal rule, converting time to days
     TWA_two_phase = AUC_two_phase / max(time / 24),  # Time-weighted average concentration (AUC / total duration in days)
@@ -4700,24 +4702,28 @@ simple_best_model_metrics <- model_compare_metrics %>%
   mutate(R2 = case_when(
     better_model == "full" ~ R2_full_model,
     better_model == "simple" ~ R2_simple_model,
+    better_model == "two_phase" ~ R2_two_phase_model,
     better_model == "PBPK" ~ R2_pbpk_model,
     T ~ NA_real_
   ),
   RMSE = case_when(
     better_model == "full" ~ RMSE_full_model,
     better_model == "simple" ~ RMSE_simple_model,
+    better_model == "two_phase" ~ RMSE_two_phase_model,
     better_model == "PBPK" ~ RMSE_pbpk_model,
     T ~ NA_real_
   ),
   MAE = case_when(
     better_model == "full" ~ MAE_full_model,
     better_model == "simple" ~ MAE_simple_model,
+    better_model == "two_phase" ~ MAE_two_phase_model,
     better_model == "PBPK" ~ MAE_pbpk_model,
     T ~ NA_real_
   )) %>%
   mutate(`Model Type` = case_when(
     better_model == "full" ~ "Absorption",
     better_model == "simple" ~ "Absorption-independent",
+    better_model == "two_phase" ~ "two_phase",
     better_model == "PBPK" ~ "PBPK",
     T ~ NA_character_
   )) %>%
@@ -4765,7 +4771,7 @@ twa_df_multiple_theor <- twa_df %>%
       tibble(
         time = time_points,
         
-        # Two-phase model (if all alpha/beta phase params are available). 
+        # two_phase model (if all alpha/beta phase params are available). 
         two_phase_conc = if (!is.na(kabs) & !is.na(k_alpha) & !is.na(k_beta) & !is.na(VD2) & !is.na(VDc)){
         map_dbl(time_points, ~ two_phase_function(D_per_dose = D_per_dose,
                                                   #alpha phase params
@@ -4781,7 +4787,7 @@ twa_df_multiple_theor <- twa_df %>%
                                                   exposure_duration_hr = exposure_duration_hr
                                                   ))
         } else {
-          NA_real_ #if all two-phase params are not present, set to NA
+          NA_real_ #if all two_phase params are not present, set to NA
         },
         
         # Full model concentration (if kabs is available)
