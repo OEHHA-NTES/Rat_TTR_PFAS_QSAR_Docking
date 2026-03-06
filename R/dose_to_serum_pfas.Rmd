@@ -134,6 +134,7 @@ skim(dose_to_serum_2)
 ```
 
 Sent by Heather on September 30th
+
 ```{r}
 dose_to_serum_4 <- readxl::read_excel(here("data_input/Studies for various dose metric estimation round 2 PFOS PFNA PFDA 9.30.2024.xlsx"))
 
@@ -162,7 +163,9 @@ skim(dose_to_serum_4)
 
 Data sent by Heather on 12-31-2024
 
-Note that included GenX and TFA here for demo purposes (to export to RShiny app)
+Note that included GenX and TFA here for demo purposes (to export to
+RShiny app)
+
 ```{r}
 dose_to_serum_5 <- read_csv(here("data_input/Studies for various dose metric estimation 2024.12.31.csv"))
 
@@ -179,8 +182,10 @@ dose_to_serum_5 <- dose_to_serum_5 %>%
 skim(dose_to_serum_5)
 ```
 
+Heather has assembled a large document with many different combinations
+of chemicals/sex/species/exposure routes that she needs model params
+for.
 
-Heather has assembled a large document with many different combinations of chemicals/sex/species/exposure routes that she needs model params for.
 ```{r}
 dose_to_serum_6 <- readxl::read_excel(here("data_input/2025.04.15 Unique chem sex.xlsx"),
                                       sheet = "combination")
@@ -222,8 +227,8 @@ dose_to_serum_6 %>%
   arrange(desc(experiment_chemical))
 ```
 
-
 ### Combine data
+
 ```{r}
 dose_to_serum <- bind_rows(dose_to_serum_1,
                            dose_to_serum_2,
@@ -301,7 +306,10 @@ dose_to_serum %>%
   distinct(chem, cas, species_name, route) %>% 
   arrange(desc(species_name))
 ```
-Just investigate unique chems and data availability in EASE-SUITE (for any species)
+
+Just investigate unique chems and data availability in EASE-SUITE (for
+any species)
+
 ```{r}
 chem_availability <- dose_to_serum %>% 
   distinct(chem, cas) %>% 
@@ -318,13 +326,17 @@ chem_availability %>%
   group_by(data_avail) %>% 
   summarize(n_distinct(cas))
 ```
+
 Investigate missing chems
+
 ```{r}
 chem_availability %>% 
   filter(data_avail == "Not Available") %>% 
   distinct(chem, cas)
 ```
+
 # Ensure steady state reached
+
 ## Calculate time to steady state for each chemical
 
 For a fraction remaining of 0.10 (i.e., 90% removal), it take 3.32
@@ -405,7 +417,6 @@ tk_pfas_df %>%
            
            )
 ```
-
 
 ## Matching to TK Data from database
 
@@ -768,6 +779,7 @@ t_steady_state_hr <- bind_rows(t_steady_state_hr, fujii_t_steady_state_hr)
 ```
 
 #### Strategic prioritized matwching
+
 ### TK Data Matching
 
 The goal of this prioritization scheme is to match the critical
@@ -797,7 +809,7 @@ priority schemes. If no exact match is found, similar routes are used as
 fallbacks.
 
 | **Target Route** | **Route Priority (Descending)** |
-|-------------------|-----------------------------------------------------|
+|------------------------------------|------------------------------------|
 | **Intravenous** | Intravenous \> Intraperitoneal \> Intragastric \> Oral |
 | **Oral** | Oral \> Intragastric \> Intraperitoneal \> Intravenous |
 | **Dermal** | Dermal \> Intravenous \> Intraperitoneal \> Oral \> Inhalation |
@@ -1296,10 +1308,10 @@ tk_heat_plotly
 ```
 
 ##### Export dataset to Rshiny
-```{r}
-#saveRDS(mismatch_data, "data_output/mismatch_data_for_shiny.rds")
-```
 
+```{r}
+saveRDS(mismatch_data, "../data_output/mismatch_data_for_shiny.rds")
+```
 
 ## Check if steady state has been reached in exposure study
 
@@ -2100,8 +2112,10 @@ matched_data %>%
 ```
 
 ## Biphasic Model including alpha and beta phases
-The biphasic model for PFAAs that are known to follow such kinetic profile (e.g., GenX, PFOA, PFBS, PFOS) is as follows (doi.org/10.1016/j.envint.2018.01.011):
-### Equation (2): α Phase
+
+The biphasic model for PFAAs that are known to follow such kinetic
+profile (e.g., GenX, PFOA, PFBS, PFOS) is as follows
+(doi.org/10.1016/j.envint.2018.01.011): \### Equation (2): α Phase
 
 The serum concentration during the α phase is given by:
 
@@ -2109,16 +2123,14 @@ $$
 C_{\text{serum}, \alpha}(t) = \frac{F \cdot \left(\frac{D}{U}\right) \cdot k_a}{Vd_0 \cdot (k_a - k_d)} \cdot \left(e^{-t \cdot k_d} - e^{-t \cdot k_a}\right), \quad t \in [0, t_{\alpha,\text{end}}]
 $$
 
-Where:
-- \( F \): Bioavailable fraction (unitless)
-- \( D \): Administered dose (\(\mu g / \text{kg-bw/day}\))
-- \( U \): Unit conversion factor (\(24 \, \text{h/day}\))
-- \( Vd_0 \): Volume of distribution at time 0 (\(\text{ml/kg}\))
-- \( k_a \): Absorption rate (\(1/\text{h}\))
-- \( k_d \): Distribution rate into peripheral tissues (\(1/\text{h}\))
-- \( t_{\alpha,\text{end}} \): Time corresponding to the end of the α phase
+Where: - $F$: Bioavailable fraction (unitless) - $D$: Administered dose
+($\mu g / \text{kg-bw/day}$) - $U$: Unit conversion factor
+($24 \, \text{h/day}$) - $Vd_0$: Volume of distribution at time 0
+($\text{ml/kg}$) - $k_a$: Absorption rate ($1/\text{h}$) - $k_d$:
+Distribution rate into peripheral tissues ($1/\text{h}$) -
+$t_{\alpha,\text{end}}$: Time corresponding to the end of the α phase
 
----
+------------------------------------------------------------------------
 
 ### Equation (3): β Phase
 
@@ -2128,11 +2140,12 @@ $$
 C_{\text{serum}, \beta}(t) = C_{\text{serum}, \alpha}(t_{\alpha,\text{end}}) \cdot e^{-t \cdot k_e}, \quad t \in [t_{\alpha,\text{end}}, t_{\text{end}}]
 $$
 
-Where:
-- \( C_{\text{serum}, \beta}(t) \): Serum concentration during the β phase (\(\mu g / \text{ml}\))
-- \( C_{\text{serum}, \alpha}(t_{\alpha,\text{end}}) \): Serum concentration at the end of the α phase (\(\mu g / \text{ml}\))
-- \( k_e \): Elimination rate (\(1/\text{h}\))
-- \( t_{\text{end}} \): Time corresponding to the end of the experiment
+Where: - $C_{\text{serum}, \beta}(t)$: Serum concentration during the β
+phase ($\mu g / \text{ml}$) -
+$C_{\text{serum}, \alpha}(t_{\alpha,\text{end}})$: Serum concentration
+at the end of the α phase ($\mu g / \text{ml}$) - $k_e$: Elimination
+rate ($1/\text{h}$) - $t_{\text{end}}$: Time corresponding to the end of
+the experiment
 
 ```{r}
 # Define a function to calculate serum concentration for a given compound
@@ -2203,6 +2216,7 @@ print(compounds_data)
 ```
 
 Updated equation to match structure of other functions
+
 ```{r}
 two_phase_function <- function(D_per_dose, 
                                VDc, # VDc: beta phase volume of distribution (steady-state)
@@ -2263,7 +2277,10 @@ two_phase_function <- function(D_per_dose,
   return(concentration)
 }
 ```
- Example application 28-day continuous exposure regime with a 100 mg/kg/day dose administered once daily:
+
+Example application 28-day continuous exposure regime with a 100
+mg/kg/day dose administered once daily:
+
 ```{r}
 # Define the exposure parameters
 exposure_duration_d <- 4
@@ -2323,7 +2340,6 @@ plot <- ggplot(compounds_data_modeled, aes(x = time / 24, y = concentration, col
 
 ggplotly(plot)
 ```
- 
 
 # Simple multiple dose administration model
 
@@ -2344,12 +2360,13 @@ twa_df %>%
   distinct(chem, species_name, sex,tau_hr, Dose_mg_kg_d, HLe_invivo, VDss_L_kg, VD2, VDc, k_alpha, k_beta,
            Exposure_duration_hr)
 ```
+
 ### How many can use two_phase model?
+
 ```{r}
 twa_df %>% distinct(chem, species_name, sex,
                     kabs, k_alpha, k_beta, VD2, VDc)
 ```
-
 
 ## Generate Time-Series Data
 
@@ -2479,8 +2496,15 @@ twa_df_multiple %>%
 ```
 
 ## PBPK Model (PFOS only, Males only)
+
 ### Import model data from PFOS PBPK RShiny App
-The PFOS  PBPK model developed by Chou & Lin (2019)[https://pubmed.ncbi.nlm.nih.gov/31152982/] is implemented in the RShiny application in https://github.com/OEHHA-NTES/PFAS_TK_Shiny. This model was used to estimate serum concentrations of PFOS in male rats for PFOS and is imported below.
+
+The PFOS PBPK model developed by Chou & Lin
+(2019)\[<https://pubmed.ncbi.nlm.nih.gov/31152982/>\] is implemented in
+the RShiny application in <https://github.com/OEHHA-NTES/PFAS_TK_Shiny>.
+This model was used to estimate serum concentrations of PFOS in male
+rats for PFOS and is imported below.
+
 ```{r}
 PFOS_PBPK <- read.csv(here("data_input/pfos_pbpk_model_output.csv")) %>% 
   mutate(dose_letter = paste0("Dose_", dose_letter))
@@ -3191,7 +3215,6 @@ serum_comparison_plotly <- ggplotly(serum_comparison_scatter_base, tooltip = "te
 serum_comparison_plotly
 ```
 
-
 It seems that the NTP studies may not have actually measured the PFHXA
 values in rats 24 hr following the last dose, and may have actually
 collected immediately following administration of that last dose. We can
@@ -3199,8 +3222,8 @@ test this hypothesis by focusing on those last 24 hr of the study.
 
 ### Male-Only serum prediction analysis
 
-
 #### Predicted vs. Measured Serum SCatterplot for Male rats only
+
 ```{r}
 band_df <- tibble(x = 10^seq(log10(1e-1), log10(1000), length.out = 400))
 
@@ -3245,7 +3268,7 @@ serum_comparison_scatter_base_male <- serum_comparison %>%
   geom_errorbarh(aes(xmin = Measured_serum - Measured_serum_sd, 
                     xmax = Measured_serum + Measured_serum_sd), 
                 width = 0.1) +
-  scale_colour_discrete_c4a_cat("cols4all.area7d", name = "Chemical") +
+  scale_colour_discrete_c4a_cat("cols4all.area8d", name = "Chemical") +
   
   # Labels and theme
   labs(title = "Measured vs. Predicted Serum Concentrations (Male Rats)",
@@ -3289,8 +3312,6 @@ ggsave( "../figures/serum_comparison_scatter_male.jpg",
 
 serum_comparison_scatter_male
 ```
-
-
 
 ### PFHXA Special Case
 
@@ -4423,7 +4444,7 @@ modeled_summary_data %>%
   ggplot(aes(x = AUC_mg_L, y = AUC_ss_mg_L,
              color = chem,
              shape = sex)) +
-  geom_point(shaep = 3, alpha = 0.8) +
+  geom_point(shape = 3, alpha = 0.8) +
   geom_abline(slope = 1) +
   scale_x_log10(name = "Area Under the Curve (Full Model)") +
   scale_y_log10(name = "Area Under the Curve (Steady-State)") +
@@ -4660,6 +4681,12 @@ liver_update_final <- liver_update %>%
 #write.xlsx(x = liver_update_final, file = "data_output/BMD_formatted_liver.xlsx")
 ```
 
+```{r}
+# prep references for measured serum data
+serum_references <- serum_comparison %>% 
+  distinct(Study, species_name, chem, sex)
+```
+
 ## Export all data to excel
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
@@ -4673,12 +4700,13 @@ data_frames <- list(tk_match_summary = tk_match_summary,
                     modeled_summary_data = modeled_summary_data,
                     serum_comparison = serum_comparison,
                     lm_results = lm_results,
-                    model_compare_metrics = model_compare_metrics
+                    model_compare_metrics = model_compare_metrics,
+                    serum_references = serum_references
                     #twa_df_multiple = twa_df_multiple #full prediction data
                     )  # Modify as needed
 
 sheet_names <- c("Matched TK Data", "Summary Data", "Measured Serum Comparison", 
-                 "Serum-Predicted LM", "Model Validation"
+                 "Serum-Predicted LM", "Model Validation", "Serum references"
                  # "Time-Point Simulations"
                  )  # Customize sheet names
 
@@ -4692,8 +4720,8 @@ for (i in seq_along(data_frames)) {
 saveWorkbook(wb, file = here("data_output/dose_to_serum_data.xlsx"), overwrite = TRUE)
 ```
 
-
 ### Males-only model performance metrics for just best-fitting model
+
 ```{r}
 simple_best_model_metrics <- model_compare_metrics %>% 
   filter(species_name == "Rat",
@@ -4738,7 +4766,6 @@ write.csv(simple_best_model_metrics, "../data_output/simple_best_model_metrics.c
 
 simple_best_model_metrics
 ```
-
 
 # Theoretical model with identical dosage and exposure duration
 
@@ -5003,4 +5030,3 @@ pk_params_theor_ratio_scatter_plotly <- ggplotly(pk_params_theor_ratio_scatter,
 
 pk_params_theor_ratio_scatter_plotly
 ```
- 
