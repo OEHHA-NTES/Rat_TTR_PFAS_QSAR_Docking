@@ -2500,7 +2500,7 @@ twa_df_multiple %>%
 ### Import model data from PFOS PBPK RShiny App
 
 The PFOS PBPK model developed by Chou & Lin
-(2019)\[<https://pubmed.ncbi.nlm.nih.gov/31152982/>\] is implemented in
+(2019)$$<https://pubmed.ncbi.nlm.nih.gov/31152982/>$$ is implemented in
 the RShiny application in <https://github.com/OEHHA-NTES/PFAS_TK_Shiny>.
 This model was used to estimate serum concentrations of PFOS in male
 rats for PFOS and is imported below.
@@ -2932,7 +2932,7 @@ model_compare_metrics_intermediate <- serum_comparison %>%
 
   # ---- bias computed from RAW rows using better_model ----
 model_compare_metrics <- serum_comparison %>%
-  left_join(model_compare_metrics %>% dplyr::select(chem, species_name, sex, route, model_used, better_model), by = c("chem", "species_name", "sex", "route", "model_used")) %>% 
+  left_join(model_compare_metrics_intermediate %>% dplyr::select(chem, species_name, sex, route, model_used, better_model), by = c("chem", "species_name", "sex", "route", "model_used")) %>% 
       filter(dose_letter != "Zero") %>%
       mutate(
         pred_best = case_when(
@@ -4687,6 +4687,50 @@ serum_references <- serum_comparison %>%
   distinct(Study, species_name, chem, sex)
 ```
 
+```{r}
+# Load necessary libraries
+library(flextable)
+
+# Condense the dataset
+condensed_measured_table <- serum_comparison %>%
+  group_by(Study, chem, species_name, sex, `Serum/plasma`) %>%
+  summarize(
+    `Exposure Duration (days)` = first(closest_time), # Assuming closest_time represents exposure duration
+    `Doses Administered (mg/kg-d)` = paste(unique(Dose_mg_kg_d), collapse = ", "),
+    `Measured Serum Concentrations (mg/L)` = paste(
+      paste0(Measured_serum, " ± ", Measured_serum_sd),
+      collapse = ", "
+    ),
+    .groups = "drop"
+  ) %>%
+  rename(
+    Study = Study,
+    PFAS = chem,
+    Species = species_name,
+    Sex = sex
+  ) %>% 
+  mutate(`Exposure Duration (days)` = (`Exposure Duration (days)` - 24) / 24)
+
+# Create a publication-ready table using flextable
+publication_table <- flextable(condensed_measured_table) %>%
+  set_header_labels(
+    Study = "Study",
+    PFAS = "PFAS",
+    Species = "Species",
+    Sex = "Sex",
+    `Exposure Duration (days)` = "Exposure Duration (days)",
+    `Doses Administered (mg/kg-d)` = "Doses Administered (mg/kg-d)",
+    `Measured Serum Concentrations (mg/L)` = "Measured Serum Concentrations (mg/L)"
+  ) %>%
+  autofit() %>%
+  theme_vanilla()
+
+# Print the table
+publication_table
+
+```
+
+
 ## Export all data to excel
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
@@ -4701,12 +4745,12 @@ data_frames <- list(tk_match_summary = tk_match_summary,
                     serum_comparison = serum_comparison,
                     lm_results = lm_results,
                     model_compare_metrics = model_compare_metrics,
-                    serum_references = serum_references
+                    condensed_measured_table = condensed_measured_table
                     #twa_df_multiple = twa_df_multiple #full prediction data
                     )  # Modify as needed
 
 sheet_names <- c("Matched TK Data", "Summary Data", "Measured Serum Comparison", 
-                 "Serum-Predicted LM", "Model Validation", "Serum references"
+                 "Serum-Predicted LM", "Model Validation", "Measured Serum Table"
                  # "Time-Point Simulations"
                  )  # Customize sheet names
 
